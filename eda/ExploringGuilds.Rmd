@@ -1,0 +1,1265 @@
+---
+title: "Exploring Guilds"
+author: "Gergely Pósfai"
+date: "September 25, 2016"
+output: 
+    html_document:
+        toc: true
+        highlight: zenburn
+---
+
+<script>
+window.onload = function () {
+    var listElements = document.getElementsByTagName("li");
+    for(i = 0;i < listElements.length; i++) {
+        if (listElements[i].innerText == ""){
+            listElements[i].style.display = "none";
+        }
+    }
+}
+</script>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, fig.width = 9, fig.height = 5, cache = TRUE, cache.lazy = FALSE)
+```
+
+
+# Introduction
+
+The report uses the [World of Warcraft Avatar History](https://www.kaggle.com/mylesoneill/warcraft-avatar-history) dataset available at Kaggle and was intended to be published as a [kernel](https://www.kaggle.com/mylesoneill/warcraft-avatar-history/kernels) on Kaggle. However, unfortunately Kaggle upholds a runtime limit of 20 minutes for kernels, which was not enough to run the report.
+
+Codes are available at [https://github.com/posfaig/wow](https://github.com/posfaig/wow).
+
+The report focuses on guilds, especially on the dynamics of guilds, that is how guilds change over time, how avatars enter or leave guilds in the game.
+
+__Many of the ideas, used R packages, code snipets came from other analyses, like the analysis of [Thiago Balbo](https://www.kaggle.com/thibalbo), [33Vito](https://www.kaggle.com/tonyliu) and others. Their contributions were a huge help in making this report. So many thanks.__
+
+
+# Initial Setup, Data Import, Auxiliary Variables
+
+```{r, cache = FALSE}
+library(lubridate)
+library(stringr)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(visNetwork)
+library(scales)
+library(lazyeval)
+library(dygraphs)
+library(tidyr)
+```
+
+```{r}
+set.seed(0)
+data_dir <- "../../../data/raw/"
+
+#wow <- tbl_df(fread("../input/wowah_data.csv"))  # For Kaggle kernel
+wow <- tbl_df(fread(paste(data_dir, "wowah_data.csv", sep = "")))
+names(wow) <- trimws(names(wow))
+wow$race <- gsub(" ", "", wow$race, fixed = TRUE)
+wow$charclass <- gsub(" ", "", wow$charclass, fixed = TRUE)
+
+# Create a new column for identifying avatars
+wow$avatar <- with(wow, paste(char, race, charclass, sep = "."))
+
+# Other columns
+wow$timestamp <- mdy_hms(wow$timestamp)
+wow <- arrange(wow, timestamp)
+wow$current_date <- as.Date(wow$timestamp)
+#wow$hour <- hour(wow$timestamp)
+#wow$month <- format(wow$current_date, "%b")
+# Create a new column with the activation date of each avatar
+wow <- wow %>% group_by(avatar) %>% mutate(activation_date = min(current_date)) %>% group_by()
+
+# Create new column for identifying avatars that were created during the observed period (i.e. avatars who were seen at level 1, or level 55 for Death Knight avatars)
+wow <- wow %>% group_by(avatar) %>% mutate(new_avatar = (min(level) == 1 | (min(level) == 55 & charclass[1] == "DeathKnight"))) %>% group_by
+
+min_date <- min(wow$current_date)
+max_date <- max(wow$current_date)
+race_names <- unique(wow$race)
+charclass_names <- unique(wow$charclass)
+```
+
+
+# Basic Characteristics
+
+How many different guilds were observed?
+```{r}
+wow %>% filter(guild >= 0) %>% summarise("Number of guilds" = n_distinct(guild))
+```
+
+Number of avatars who were member of at least one guild:
+```{r}
+avatar_count_guilds <- nrow(wow %>% filter(guild >= 0) %>% distinct(avatar))
+avatar_count_no_guilds <- length(unique(wow$avatar)) - avatar_count_guilds
+c("Was member" = avatar_count_guilds, "Never joined" = avatar_count_no_guilds)
+```
+
+Percentage of avatars who were in a guild at least once on a certain level by levels:
+```{r}
+ggplotly(wow %>% group_by(level, avatar) %>%
+    summarise(in_guild = max(guild) >= 0) %>%
+    summarise(in_guild_percent = sum(in_guild) / length(unique(avatar))) %>%
+    ggplot(aes(x = level)) +
+    geom_line(aes(y = in_guild_percent), color = 'steelblue') +
+    scale_y_continuous(labels = percent_format()) + 
+    theme_bw() + labs(title = "Percentage of Avatars in Guilds by Levels", x = "Level", y = "Percentage of Avatars in Guilds"))
+```
+
+There is a significant drop at level _55_, which is presumably caused by the _Death Knight_ class (introduced in WotLK, Nov 13, 2008), which starts at level _55_.
+
+Distribution of the number of different guilds avatars were part of:
+```{r}
+wow %>% 
+    group_by(avatar) %>%
+    summarise(number_of_guilds = n_distinct(guild)-1) %>% 
+    arrange(desc(number_of_guilds)) %>%
+    ggplot(aes(x = number_of_guilds)) + geom_density(color = "steelblue", fill = "steelblue", alpha = 0.6) + 
+    theme_bw() + 
+    labs(title = "Distribution of the Number of Different Guilds Avatars Were Member of", x = "Number of Different Guilds", y = "Density")
+```
+
+At what level avatars enter their first guild (only for new avatars):
+```{r}
+wow %>% filter(new_avatar & guild >= 0) %>% group_by(avatar) %>%
+    summarise(lvl_at_first_guild = min(level)) %>% 
+    ggplot(aes(x=lvl_at_first_guild)) + 
+    geom_density(color = "steelblue", fill = "steelblue", alpha = 0.6) + 
+    theme_bw() + 
+    labs(title = "Distribution of Levels When Avatars Enter Their First Guild", x = "Level When Entering First Guild", y = "Density")
+```
+
+Distribution of the number of members of guilds. More precisely, for each guild the number of avatars who were a member of the guild at least once:
+
+```{r}
+guild_members_count <- wow %>% 
+    filter(guild >= 0) %>% 
+    group_by(guild) %>% 
+    summarise(members_count = n_distinct(avatar))
+summary(guild_members_count$members_count)
+ggplot(guild_members_count, aes(x = members_count)) + 
+    geom_density(color = "steelblue", fill = "steelblue", alpha = 0.6) + 
+    xlim(1, 50) +
+    theme_bw() + 
+    labs(title = "Distribution of the Number of Guild Members by Guilds", x = "Number of Guild Members", y = "Density")
+```
+
+_Note_: in the density plot above only guilds with less than or equal to _50_ members are shown in order to make the slope of the density's drop more visible.
+
+
+# Introducing Guild Events
+
+We create a new column indicating the events of entering and leaving guilds. The new column can take one of four values:
+
+* __No Event__: no event.
+* __Guild Left__: the avatar left his/her guild and did not enter a new one.
+* __Guild Entered__: the avatar entered a guild without leaving one.
+* __Guild Changed__: the avatar changed his/her guild, i.e. left his/her current guild and entered a new one immediately.
+
+To do this, first we create a *prev_guild* column which indicates the last observed guild of the current avatar. If there is no previous observation for the avatar, then the value is _-2_.
+```{r}
+wow <- wow %>% group_by(avatar) %>% mutate(prev_guild = lag(guild)) %>% group_by
+wow$prev_guild[is.na(wow$prev_guild)] <- -2
+```
+
+Now create the _event_ column:
+```{r}
+wow <- wow %>%
+    mutate(event = ifelse(guild == prev_guild, "No Event", "Guild Changed")) %>%
+    mutate(event = ifelse(event == "Guild Changed" & prev_guild == -1, "Guild Entered", event)) %>%
+    mutate(event = ifelse(event == "Guild Changed" & guild == -1, "Guild Left", event)) %>%
+    mutate(event = ifelse(prev_guild == -2, ifelse((guild != -1 & new_avatar), "Guild Entered", "No Event"), event))
+summary(factor(wow$event))
+```
+
+
+# Guild Members Over Time
+
+In order to examine the dynamics of guilds, we are going to look at how certain attributes of guilds change over time. To make computations feasible, we are going to compute these attributes only for midnight at each day in the observed period. The computed attributes include
+the number of guild members, the average level of guild members, the number of members in each race and class and a few other variables.
+
+```{r}
+# Auxiliary data frame variable
+guild_members <- wow %>% group_by(avatar) %>% slice(1) %>% group_by() %>% filter(current_date == min_date | !new_avatar)
+
+time_step <- 60*24  # minutes
+snap_times <- seq(as.POSIXlt(as.Date("2008-01-02")), as.POSIXlt(as.Date("2009-01-01")), time_step * 60)
+
+compute_guild_features <- function(current_time) {
+    feature_names <- c("guild_members_count", "avg_level", "median_level", "sd_level", "min_level", "max_level", race_names, charclass_names)
+    values_for_mising_guilds <- c(0, 0, 0, 0, 0, 0, rep(0, length(race_names) + length(charclass_names)))
+
+    if (!is.null(guild_members) && nrow(guild_members) > 0) {
+        stats_df <- guild_members %>% group_by(guild) %>% summarise(
+            guild_members_count = length(level),
+            avg_level = mean(level),
+            median_level = median(level),
+            sd_level = ifelse(guild_members_count == 1, 0, sd(level)),
+            min_level = min(level),
+            max_level = max(level),
+            Orc = sum(race == "Orc"),
+            Tauren = sum(race == "Tauren"),
+            Troll = sum(race == "Troll"),
+            Undead = sum(race == "Undead"),
+            BloodElf = sum(race == "BloodElf"),
+            Rogue = sum(charclass == "Rogue"),
+            Hunter = sum(charclass == "Hunter"),
+            Warrior = sum(charclass == "Warrior"),
+            Shaman = sum(charclass == "Shaman"),
+            Warlock = sum(charclass == "Warlock"),
+            Druid = sum(charclass == "Druid"),
+            Priest = sum(charclass == "Priest"),
+            Mage = sum(charclass == "Mage"),
+            Paladin = sum(charclass == "Paladin"),
+            DeathKnight = sum(charclass == "DeathKnight")
+        )
+        missing_guilds <- setdiff(unique(wow$guild), stats_df$guild)
+    } else {
+        missing_guilds <- unique(wow$guild)
+    }
+
+    if (!is.null(missing_guilds) && length(missing_guilds)>0) {
+        sapply(missing_guilds, 
+               function(missing_guild) {
+                    stats_df <<- rbind(stats_df, c(missing_guild, values_for_mising_guilds))
+                    }
+               )
+    }
+
+    stats_df$time <- current_time
+    stats_df
+}
+
+temporal_guild_stats <- data.frame()
+row_index <- 1
+for (current_time in snap_times) {   # ~20 min on my machine
+
+    # Getting the next block of records containing data up to the time of the next snap
+    new_records <- wow[(row_index:nrow(wow)), ] %>% filter(timestamp <= current_time)
+    row_index <- row_index + nrow(new_records)
+
+    if (!is.null(new_records) && nrow(new_records) > 0) {
+        # Keeping only the last record of each avatar in the current time interval
+        guild_members <- rbind(guild_members, new_records)
+        guild_members <- guild_members %>% group_by(avatar) %>% slice(n()) %>% group_by()
+    }
+    #print(paste(row_index, nrow(wow), sep="/"))
+
+    # Compute guild stats for the time of the snap
+    if (is.null(temporal_guild_stats) || nrow(temporal_guild_stats) == 0) {
+        temporal_guild_stats <- compute_guild_features(current_time)
+    } else {
+        temporal_guild_stats <- rbind(temporal_guild_stats, compute_guild_features(current_time))
+    }
+}
+rm(guild_members, new_records)
+
+temporal_guild_stats$time <- as.POSIXct(temporal_guild_stats$time, origin = '1970-01-01')  # Not sure why the time column lost its class
+temporal_guild_stats$date <- as.Date(temporal_guild_stats$time)
+temporal_guild_stats$guild <- as.character(temporal_guild_stats$guild)
+```
+
+
+## Number of Members By Guilds Over Time {.tabset}
+
+```{r}
+get_avg_lvl_by_time_plot <- function(min_guild_id, max_guild_id, y_column, y_axis_title, title) {
+    data <- temporal_guild_stats %>% 
+        filter(as.numeric(guild) >= min_guild_id & as.numeric(guild) <= max_guild_id) %>%
+        select_("date", "guild", y_column) %>%
+        spread_("guild", y_column)
+    
+    dygraph(
+        ts(data[, -1], min_date + 1, max_date + 1), xlab = "Date", ylab = y_axis_title, main = title) %>% 
+        dyRangeSelector(dateWindow = c(as.Date("2008-09-01"), as.Date("2008-12-01"))) %>%
+        dyEvent("2008-11-13", "WoTLK release", labelLoc = "bottom") %>%
+        dyLegend(show = "onmouseover")
+}
+```
+
+
+### Guild ID [0,90]
+
+```{r, fig.width = 9, fig.height = 4}
+get_avg_lvl_by_time_plot(0, 90, "guild_members_count", "Number of Members", "Number of Guild Members Over Time By Guilds")
+```
+
+
+### [91,180]
+
+```{r, fig.width = 9, fig.height = 4}
+get_avg_lvl_by_time_plot(91, 180, "guild_members_count", "Number of Members", "Number of Guild Members Over Time By Guilds")
+```
+
+
+### [181,270]
+
+```{r, fig.width = 9, fig.height = 4}
+get_avg_lvl_by_time_plot(181, 270, "guild_members_count", "Number of Members", "Number of Guild Members Over Time By Guilds")
+```
+
+
+### [271,360]
+
+```{r, fig.width = 9, fig.height = 4}
+get_avg_lvl_by_time_plot(271, 360, "guild_members_count", "Number of Members", "Number of Guild Members Over Time By Guilds")
+```
+
+
+### [361,450]
+
+```{r, fig.width = 9, fig.height = 4}
+get_avg_lvl_by_time_plot(361, 450, "guild_members_count", "Number of Members", "Number of Guild Members Over Time By Guilds")
+```
+
+
+### [451,540]
+
+```{r, fig.width = 9, fig.height = 4}
+get_avg_lvl_by_time_plot(451, 540, "guild_members_count", "Number of Members", "Number of Guild Members Over Time By Guilds")
+```
+
+
+### -1 (Avatars with No Guild)
+
+```{r, fig.width = 9, fig.height = 4}
+get_avg_lvl_by_time_plot(-1, -1, "guild_members_count", "Number of Members", "Number of Guild Members Over Time By Guilds")
+```
+
+
+## Transient Drops in the Number of Guild Members
+
+In some guilds there can be seen transient fluctuations in the number of members quite frequently. Take a closer look on one of these guilds, e.g. guild _273_.
+
+```{r}
+guild_id <- 273
+ggplotly(temporal_guild_stats %>% 
+    filter(guild == guild_id) %>% 
+    ggplot(aes(x=date)) +
+        geom_line(aes(y = guild_members_count), color="steelblue") +
+        theme_bw() + 
+        labs(title = paste("Number of Members of Guild", guild_id), x = "Date", y="Number of Members"))
+```
+
+The suspicion was right, the fluctuation is much more apparent in this plot. Let's take a look on the records where avatars left this guild, and also the previous and subsequent records of those avatars:
+
+```{r}
+leaving_avatars <- wow %>% filter(prev_guild == guild_id & guild != guild_id) %>% select(avatar) %>% group_by(avatar) %>% summarise(records_count = n()) %>% arrange(desc(records_count))
+
+invisible(wow %>%
+    filter(avatar %in% leaving_avatars$avatar[1:3]) %>%
+    select(avatar, guild, prev_guild, timestamp) %>%
+    group_by(avatar) %>% do(
+        {
+            rows <- which(.$prev_guild == guild_id & .$guild != guild_id)
+            if (length(rows) > 0) {
+                rows <- c(rows, rows - 1, rows + 1)
+                rows <- sort(rows[rows > 0 & rows <= nrow(.)])
+                print("------------------------")
+                print(cbind(row = rows, .[rows,]))
+            }
+            data.frame()
+        }
+    ))
+```
+
+It can be seen there are temporal exits, when an avatar leaves his/her guild, but in the next record the avatar is already a member of it again. (So these temporal guild exits go through even within days, moreover within a few successive records of avatars.) I do not know what is the reason behind this phenomena. Maybe these records could be just incorrect data, or there might be some kind of peculiarity in the game causing this. Anyway, later on -- depending on the task -- it might be necessary to filter out such temporal exits.
+
+
+## Number of Guild Events by Date
+
+```{r}
+transitions_by_date <- tbl_df(data.frame(current_date = seq.Date(min_date, max_date, "days")))
+transitions_by_date <- inner_join(transitions_by_date, wow %>% filter(event != "No Event" & !is.na(event))) %>% mutate(Event = factor(event))
+ggplotly(ggplot(data = transitions_by_date, aes(x = current_date)) + geom_bar(aes(fill = Event)) + 
+        theme_bw() + 
+        labs(title = "Number of Guild Events by Date", x = "Count", y = "Number of Events"))
+```
+
+There is a huge peak in October, more specifically:
+
+```{r}
+transitions_by_date <- transitions_by_date %>% group_by(current_date) %>% summarise(transitions = n())
+transitions_by_date[which(transitions_by_date$transitions > 400), "current_date"]
+```
+
+Even though it is quite strange, it coincides with the plot of the number of guild members over time for guild ids _[451,540]_, where it can be seen that one guild (guild _460_) had a huge growth in the number of members. So probably only a single guild is responsible for the observed peak in October. We can look at the guild entering events on the corresponding dates for that guild:
+
+```{r}
+nrow(wow %>% filter(event != "No Event" & (current_date == "2008-10-08" | current_date == "2008-10-09") & guild == 460))
+```
+
+If we would ignore the events of this guild for these dates, the number of the remaining events would not be extraordinary anymore.
+
+Additionally, in [Thiago Balbo's](https://www.kaggle.com/thibalbo) [analysis](https://www.kaggle.com/thibalbo/d/mylesoneill/warcraft-avatar-history/wow-dataset-exploratory-analysis/notebook), there was a [plot of character activations](https://www.kaggle.io/svf/269044/d15d7b56cb1e8eb4d51566fda6d37cea/__results__.html#character-activations), where a significant peak was shown around these dates, as noted by [33Vito](https://www.kaggle.com/tonyliu) in the [comments](https://www.kaggle.com/thibalbo/d/mylesoneill/warcraft-avatar-history/wow-dataset-exploratory-analysis/comments). By looking at the avatars entering guild _460_ on _08-10-2008_ and _09-10-2008_, it can be seen, that most of these avatars were activated on these days indeed, and also most of these avatars were actually newly created ones, (so not just their first observed record pertains to these dates, but they were also created at that time, i.e. their level is _1_):
+
+```{r}
+# Activation date is either 08-10-2008 or 09-10-2008
+summary(wow %>% filter(guild == 460 & event == "Guild Entered" & (current_date == "2008-10-08" | current_date == "2008-10-09")) %>% mutate(activated_at_entering_surge = (activation_date == "2008-10-08" | activation_date == "2008-10-09")) %>% select(activated_at_entering_surge))
+
+# How many are newly created avatars between them?
+summary(wow %>% filter(guild == 460 & event == "Guild Entered" & (current_date == "2008-10-08" | current_date == "2008-10-09")) %>% select(new_avatar))
+```
+
+So to sum up this strange observation, we saw, that a lot of new avatars were created on two days in mid October ([most of them are warriors](https://www.kaggle.io/svf/269044/d15d7b56cb1e8eb4d51566fda6d37cea/__results__.html#character-activations)), and these avatars immediately joined guild _460_ resulting in a huge growth in the number of its guild members.
+
+
+# Relation Between Levels and Guild Event Frequency
+
+Number of guild events by levels:
+
+```{r}
+ggplotly(wow %>%
+	filter(event != "No Event") %>%
+    ggplot(aes(x = level)) + geom_bar(aes(fill = event)) +
+        theme_bw() + 
+        labs(title = "Number of Guild Events by Level", x = "Count", y = "Level"))
+```
+
+As can be seen most of the events belong to avatars at maximum level (i.e. level 70 before WotLK and level 80 after WotLK), however, this does not necessarily mean that maximum-level avatars change guilds more frequently than others, it can be simply the result of that most of the records belong to maximum-level avatars (as they probably play a lot). So let's take a look at the distribution of levels across all records:
+
+```{r}
+ggplot(data = wow, aes(x = level)) + 
+    geom_density(color = "steelblue", fill = "steelblue", alpha = 0.6) +
+    theme_bw() + 
+    labs(title = "Distribution of Levels", x = "Level", y = "Density")
+```
+
+It can be seen that the distribution of levels coincides very well with the number of events at each level. So in order to find out if the frequency of guild events is independent of levels, we do a chi-squared test of independence. First we cut the level variable into groups and create a contingency table containing the number of guild events and the number records without guild event for all level groups. Finally we perform the chi-squared test of independence on the table, where the null hypothesis asserts that the variables are independent:
+
+```{r}
+level_breaks <- c(0, 2, 8, 15, 30, 45, 60, 69, 71, 78, 80)
+wow$level_group <- cut(wow$level, breaks = level_breaks)
+tbl <- table((wow$event != "No Event"), wow$level_group)
+# Test for significant disproportions
+chisq.test(tbl)
+```
+
+Since the p-value is very low (e.g. _<0.05_), we can reject the null hypothesis. That tells us that somewhere across the contingency table there is a disproportionate number of guild events across the level groups. To find out which level groups stick out, we do post-hoc tests comparing the ratio within level groups to the total ratio of guild-event records (guild entered/left/changed) and _No Event_ records. We are going to use Bonferroni-corrected p-values to account for the number of tests, and are going to test with significance level _0.05_.
+
+```{r}
+number_of_tests <- length(unique(wow$level_group))
+t_test_results <- list()
+for (current_group in unique(wow$level_group)) {
+    tbl <- table((wow$event != "No Event"), factor(wow$level_group == current_group))
+    t_test_results[[current_group]] <- chisq.test(tbl)
+}
+tTestCorrectedPValues <- lapply(t_test_results, 
+                                function(x) {
+                                    x$p.value * number_of_tests
+                                    }
+                                )
+lapply(tTestCorrectedPValues, 
+       function(x) {
+           paste("Null hypothesis rejected:", x < 0.05, "(Bonferroni-corrected p-value:", x, ")")
+           }
+       )
+```
+
+The null hypothesis was retained for only `r sum(unlist(lapply(tTestCorrectedPValues, function(x) { x >= 0.05 } )))` level group(s), so probably there is a strong relationship between the level of avatars and the frequency of guild events.
+
+
+# Distribution of Event Types Within Races and Character Classes {.tabset}
+
+```{r}
+get_distr_within_factor <- function(group_by_col) {
+    wow %>%
+        filter(event != "No Event") %>%
+        group_by_(group_by_col, "event") %>%
+        summarise(count = n()) %>%
+        mutate(Percentage = count / sum(count), Event = factor(event)) %>%
+        group_by() %>%
+        ggplot(aes_string(x = group_by_col, y = "Percentage")) +
+        scale_y_continuous(labels = percent_format()) + 
+        geom_bar(aes(fill = Event), stat = "identity", position = "dodge") +
+        theme_bw()
+}
+
+```
+
+
+## Races
+
+```{r}
+ggplotly(get_distr_within_factor("race") + labs(title = "Distribution of Guild Events Within Races", x = "Race"))
+```
+
+
+## Character Classes
+
+```{r}
+ggplotly(get_distr_within_factor("charclass") + labs(title = "Distribution of Guild Events Within Character Classes", x = "Character Class"))
+```
+
+# Lifetime of Guilds
+
+## Distribution Guild Lifetimes
+
+We compute the lifetime of a guild as the time between the last and the first date when the guild had more than 0 members.
+
+```{r}
+guild_lifetime <- temporal_guild_stats %>%
+    group_by(guild) %>%
+    summarise(start_date = min(date[guild_members_count != 0]), end_date = max(date[guild_members_count != 0])) %>%
+    mutate(lifetime = as.numeric(end_date - start_date))
+ggplot(guild_lifetime, aes(x = lifetime)) + 
+    geom_density(color = "steelblue", fill = "steelblue", alpha = 0.6) +
+    theme_bw() + 
+    labs(title = "Distribution of Guild Lifetimes", x = "Lifetime in Days", y = "Density")
+```
+
+
+## Subsistence of Guilds by Dates
+
+```{r, fig.height = 15}
+guild_lifetime %>% 
+    mutate(lifetime = end_date - start_date) %>%
+    gather(type, date, start_date:end_date) %>%
+    mutate(guild = factor(guild)) %>%
+    ggplot(aes(x = date, y = guild)) + 
+    geom_line(aes(color = guild)) +
+    theme_bw() + 
+    theme(axis.text.y = element_blank(), legend.position = "none") +
+    labs(title = "Guild Lifetimes", x = "Date", y = "Guild ID")
+```
+
+
+## Newly Created Guilds
+
+Let's find out how many of the guilds were created during the observed period and how many of them had already been existed. We consider a guild _newly created_ if all its observed members are either newly created avatars or avatars that had been a member of a different guild before joining this one.
+
+```{r}
+# First, create a column indicating whether the current guild is the first guild of the avatar
+wow <- wow %>%
+    group_by(avatar) %>%
+    mutate(this.is.first.guild = sapply(1:length(guild), 
+                                        function(x,y) {
+                                            length(unique(y[1:x])) == 1
+                                            }, 
+                                        guild)) %>% group_by()
+
+# Create a data frame for guilds, with a column indicating whether it is a new guild or not
+new_guilds <- wow %>%
+    group_by(guild, avatar) %>%
+    slice(1) %>%
+    group_by(guild) %>%
+    summarise(new_guild = (sum(new_avatar | !this.is.first.guild) == length(new_avatar)))
+
+# Number of already existing guilds and new guilds
+summary(new_guilds$new_guild)
+```
+
+Most of the guilds had been created before the beginning of the observed period, however more than one third of the guilds were cerated afterwards. 
+
+Creation of new guilds by dates:
+
+```{r}
+# First we create a logical column indicating if the current record corresponds to the creation of a new guild
+wow <- left_join(wow, new_guilds, by = "guild")
+wow <- wow %>% 
+    group_by(guild) %>% 
+    mutate(guild_creation = c(new_guild[1], rep(FALSE, length(new_guild)-1))) %>% 
+    group_by()
+
+# Count and plot the number of new guilds for each date
+tbl_df(data.frame(current_date = seq.Date(min_date, max_date, "days"))) %>%
+    full_join(wow %>% filter(guild_creation) %>% group_by(current_date) %>% summarise(n = n())) %>%
+    mutate(n = ifelse(is.na(n), 0, n)) %>%
+    ggplot(aes(x = current_date, y = n)) + 
+    geom_bar(stat = "identity", fill = "darkorange", color = "darkorange") + 
+    theme_bw() + 
+    labs(title = "Number of Created Guilds by Date", x = "Date", y = "Number of Created Guilds")
+```
+
+
+# Graph of Guild Transitions {.tabset}
+
+We can visualize the transitions between guilds. The following plots are divided by the level of the transitioning avatars. The color of the nodes indicate the sign of the difference between joining and leaving avatars: green indicates more joining than leaving avatars, red represents the opposite, and yellow corresponds for equal number of joining and leaving avatars. The size of nodes and thickness of edges correspond to the number of transitions. Also the color of edges represent the type of events. Green edges represent avatars entering a guild, red edges represent avatars leaving a guild and blue represents direct changes between two guilds. For better visibility only nodes and edges with enough number of transitions are shown. The thresholds vary across the plots and are defined as arguments to the *plot_lvl_group* function.
+
+```{r}
+nodes <- data.frame(id = unique(wow$guild))
+edges <- ungroup(wow) %>% filter(event != "No Event") %>% select(avatar, level, level_group, prev_guild, guild)
+names(edges) <- c("avatar", "level", "level_group", "from", "to")
+
+plot_lvl_group <- function(min_level = 0, max_level = 5, transition_threshold_for_nodes = 5, transition_threshold_for_edges = 5, node_size_metric = c("entered", "left", "entered+left", "entered-left"), log_node_size = TRUE) {
+	edges <- edges %>% filter(level >= min_level, level <= max_level)
+
+	# Compute nodes' size
+	entered_avatars <- edges %>% group_by(to) %>% summarise(entered = n())
+	left_avatars <- edges %>% group_by(from) %>% summarise(left = n())
+	nodes <- left_join(nodes, entered_avatars, by = c("id" = "to"))
+	nodes <- left_join(nodes, left_avatars, by = c("id" = "from"))
+
+	nodes$entered[is.na(nodes$entered)] <- 0
+	nodes$left[is.na(nodes$left)] <- 0
+
+	if (node_size_metric == "entered") {
+		nodes$value <- nodes$entered
+	} else if (node_size_metric == "left") {
+		nodes$value <- nodes$left
+	} else if (node_size_metric == "entered+left") {
+		nodes$value <- nodes$entered + nodes$left
+	} else if (node_size_metric == "entered-left") {
+		nodes$value <- nodes$entered - nodes$left
+	} else {
+		stop("Unknown node size metric")
+	}
+	nodes$value <- abs(nodes$value)
+
+	# Compute edges' size
+	edges <- edges %>% group_by(from, to) %>% summarise(transitions = n())
+	edges$value <- edges$transitions
+
+	# Node attributes
+	nodes$label <- nodes$id
+	nodes$title <- str_c("Entered: <b>", nodes$entered, "</b><br>Left: <b>", nodes$left, "</b>")
+	nodes$color <- "#D41313"
+	nodes$color[nodes$entered == nodes$left] <- "#E4E63F"
+	nodes$color[nodes$entered > nodes$left] <- "#17A019"
+
+	# Edge attributes
+	edges$title <- paste(paste(edges$from, edges$to, sep=" -> "), edges$transitions, sep=" : ")
+	edges$color <- "#618CC1"
+	edges$color[edges$to == -1] <- "#DD5A5A"
+	edges$color[edges$from == -1] <- "#61C163"
+
+	# Filter nodes and edges
+	print(paste("All transitions:", sum(edges$transitions)))
+	nodes <- nodes %>% filter(entered + left >= transition_threshold_for_nodes)
+	edges <- edges %>% filter(from %in% nodes$id & to %in% nodes$id)
+    edges <- edges %>% filter(value >= transition_threshold_for_edges)
+
+	if (log_node_size) {
+		if (min(nodes$value == 0)) {
+			nodes$value <- nodes$value + 1
+		}
+		nodes$value <- log(nodes$value)
+	}
+	print(paste("Shown edges:", nrow(edges)))
+	print(paste("Shown nodes:", nrow(nodes)))
+
+	visNetwork(nodes, edges, width = "100%") %>%
+		visEdges(arrows = "to")
+}
+```
+
+
+## Level [1,5]
+
+```{r}
+plot_lvl_group(min_level = 1, max_level = 5,
+    transition_threshold_for_nodes = 10,
+    transition_threshold_for_edges = 0,
+    node_size_metric = "entered+left",
+    log_node_size = TRUE)
+```
+
+
+## [6,15]
+
+```{r}
+plot_lvl_group(min_level = 6, max_level = 15,
+    transition_threshold_for_nodes = 10,
+    transition_threshold_for_edges = 0,
+    node_size_metric = "entered+left",
+    log_node_size = TRUE)
+```
+
+
+## [16,30]
+
+```{r}
+plot_lvl_group(min_level = 16, max_level = 30,
+    transition_threshold_for_nodes = 15,
+    transition_threshold_for_edges = 0,
+    node_size_metric = "entered+left",
+    log_node_size = TRUE)
+```
+
+
+## [31,50]
+
+```{r}
+plot_lvl_group(min_level = 31, max_level = 50,
+    transition_threshold_for_nodes = 15,
+    transition_threshold_for_edges = 0,
+    node_size_metric = "entered+left",
+    log_node_size = TRUE)
+```
+
+
+## [51,65]
+
+```{r}
+plot_lvl_group(min_level = 51, max_level = 65,
+    transition_threshold_for_nodes = 20,
+    transition_threshold_for_edges = 2,
+    node_size_metric = "entered+left",
+    log_node_size = TRUE)
+```
+
+
+## [66,70]
+
+```{r}
+plot_lvl_group(min_level = 66, max_level = 70,
+    transition_threshold_for_nodes = 50,
+    transition_threshold_for_edges = 5,
+    node_size_metric = "entered+left",
+    log_node_size = TRUE)
+```
+
+
+## [71,75]
+
+```{r}
+plot_lvl_group(min_level = 71, max_level = 75,
+    transition_threshold_for_nodes = 5,
+    transition_threshold_for_edges = 0,
+    node_size_metric = "entered+left",
+    log_node_size = TRUE)
+```
+
+
+## [76,80]
+
+```{r}
+plot_lvl_group(min_level = 76, max_level = 80,
+    transition_threshold_for_nodes = 5,
+    transition_threshold_for_edges = 0,
+    node_size_metric = "entered+left",
+    log_node_size = TRUE)
+```
+
+
+#
+
+A few things can be seen on the transition graphs. E.g. for levels _[1,5]_ the node of guild _460_ is apparently bigger than others, that is, it had many low-level avatars joining, however, if we switch to higher levels, guild _460_ is not noticable anymore. Also, as we go to higher levels more and more red nodes and blue edges appear. Also, the number of all transitions is remarkably higher for level group _[66,70]_ than for any other level group. (Note, that levels above _70_ only came into to game in November.)
+
+
+# Impacts on Guild Events
+
+## Impact of Previous Guilds
+
+We examine whether avatars are more easily join guilds if they had been already a guild member previously or not. To do this we examine how long does it take for an avatar after leaving a guild to join a new one.
+
+We only take into consideration avatars who have been recorded at least 365 times.
+
+We compute the intervals in two units: days passed, and the number the avatar's observed records during that time.
+
+```{r}
+# First, create a column indicating how many different guilds the avatars had been member of till the current time
+# ~ 15 min
+wow <- wow %>%
+    group_by(avatar) %>%
+    mutate(joined_guilds_count =
+               sapply(1:length(guild),
+                      function(x, y) {
+                          tmp <- y[1:x]
+                          tmp <- tmp[tmp != -1]
+                          length(unique(tmp))},
+                      guild)) %>%
+    group_by()
+
+# If the avatar is a new avatar, then we can assess how much time did it take for him/her to join his/her first guild. Here, we only consider avatars that joined at least one guild at some point.
+# Additionally, for each avatar with at least 2 observed guilds, we compute the length of intervals the avatar spent between his/her guilds. That is, how much time passed from leaving a guild until entering the next guild.
+
+min_records <- 365
+wow <- wow %>% group_by(avatar) %>% mutate(records = n()) %>% group_by()
+# ~20 minutes
+intervals <- wow %>% 
+    filter(records >= min_records) %>% 
+    group_by(avatar) %>% 
+    do({
+        result <- data.frame()
+        if (.$new_avatar[1]) {
+            tmp_ind <- which(.$joined_guilds_count == 1)[1]  # First guild joined.
+            if (!is.na(tmp_ind) && length(tmp_ind) > 0) {
+                result <- rbind(result, data.frame(
+                    Interval = (.$timestamp[tmp_ind] - .$timestamp[1]), 
+                    unit = "Interval Units: Days", 
+                    Type = "Before Joining First Guild"))
+                result <- rbind(result, data.frame(
+                    Interval = (tmp_ind - 1), 
+                    unit = "Interval Units: Records", 
+                    Type = "Before Joining First Guild"))
+            }
+        }
+        last_record_in_guild <- which(.$guild != -1)
+        if (length(which(.$guild != -1)) > 0) {
+            last_record_in_guild <- max(last_record_in_guild)
+            tmp_df <- .[1:last_record_in_guild, c("guild", "joined_guilds_count", "timestamp")]
+            tmp_df <- tmp_df %>% filter(guild == -1 & joined_guilds_count >= 1)
+            tmp <- tmp_df %>% group_by(joined_guilds_count) %>% summarise(interval = max(timestamp) - min(timestamp))
+            if (nrow(tmp_df) > 0) {
+                result <- rbind(result, data.frame(
+                    Interval = tmp$interval, 
+                    unit = "Interval Units: Days", 
+                    Type = "Before Joining Subsequent Guilds"))
+                result <- rbind(result, data.frame(
+                    Interval = as.vector(table(tmp_df$joined_guilds_count)), 
+                    unit = "Interval Units: Records", 
+                    Type = "Before Joining Subsequent Guilds"))
+            }
+        }
+        result
+    })
+
+ggplot(intervals, aes(Type, Interval)) + facet_wrap( ~ unit, scales="free") +
+    geom_boxplot(aes(fill = Type)) +
+    theme_bw() +
+    theme(legend.position = "top", axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ggtitle("Time Spent Outside of Guilds Until Joining First and Subsequent Guilds") +
+    ylab("Length of Intervals Spent Outside of Guilds")
+```
+
+Interestingly, if we look at the time of intervals (~days), it can be seen that it takes less time to join the first guild than joining subsequent guilds after leaving the previous one. Even more interestingly, if we measure the length of intervals in the number of observed records the relation turns around, which can be interpreted as it takes less _playtime_ joining guilds after leaving the previous one, than joining the very first guild. 
+
+So my not too elaborate interpretation would be that new avatars are probably quite enthusiastic so they play a lot in the beginning, but they might not know many things about guilds so it takes some time for them to join one. On the other hand, avatars who have already left a guild are less enthusiastic on average, so they play less frequently, therefore it takes even more _(real) time_ for them to join another guild. But they are also more familiar with guilds, so they more easily join a new one, thus it takes less _playtime (observed records)_ for them to join a new guild.
+
+
+## Impact of the Number of Guild Members on Guild Events {.tabset}
+
+We plot the distribution of the number of members of corresponding guilds at guild entering/leaving events. To do this, we join the original data frame of observed records with the guild statistics over time by date.
+
+Note that we computed the number of guild members only on a daily basis earlier, so this plot (and many of the following ones) are not totally accurate, but still might be useful.
+
+```{r}
+wow <- left_join(wow,
+            temporal_guild_stats %>%
+                mutate(current_date = date, guild = as.numeric(guild)) %>%
+                select(guild, current_date, guild_members_count, avg_level, Orc, Tauren, Troll, Undead, BloodElf, Rogue, Hunter, Warrior, Shaman, Warlock, Druid, Priest, Mage, Paladin, DeathKnight),
+            by = c("current_date", "guild"))
+
+wow <- left_join(wow,
+                  temporal_guild_stats %>%
+                      mutate(current_date = date,
+                             prev_guild = as.numeric(guild),
+                             prev_guild_members_count = guild_members_count,
+                             prev_guild_avg_lvl = avg_level) %>%
+                      select(prev_guild, current_date, prev_guild_members_count, prev_guild_avg_lvl),
+                  by = c("current_date", "prev_guild"))
+```
+
+### Guild Entering Events
+
+```{r}
+wow %>% 
+    filter(!is.na(guild_members_count) & (event == "Guild Entered" | event == "Guild Changed")) %>% 
+    select(guild_members_count) %>% 
+    ggplot() + 
+    geom_density(aes(x = guild_members_count), 
+                 color = "steelblue", fill = "steelblue", alpha = 0.6) + 
+    theme_bw() + 
+    labs(title = "Distribution of the Number of Guild Members at Guild Entering Events", x = "Number of Guild Members", y = "Density") +
+    xlim(1, 1750) + ylim(0, 0.0028)
+```
+
+
+### Guild Leaving Events
+
+```{r}
+wow %>% 
+    filter(!is.na(prev_guild_members_count) & (event == "Guild Left" | event == "Guild Changed")) %>% 
+    select(prev_guild_members_count) %>% 
+    ggplot() + 
+    geom_density(aes(x = prev_guild_members_count), 
+                 color = "steelblue", fill = "steelblue", alpha = 0.6) + 
+    theme_bw() + 
+    labs(title = "Distribution of the Number of Guild Members at Guild Leaving Events", x = "Number of Guild Members", y = "Density") + 
+    xlim(1, 1750) + ylim(0, 0.0028)
+```
+
+##
+
+As can be seen the number of entering events -- after a short increase at the beginning -- starts to quickly decrease by increasing guild members, so probably most of the guilds do not grow beyond a certain size, however, there are a few peaks at bigger guilds, which probably pertain to individual guilds that grew to a big size.
+
+The distribution pertaining to guild leaving events shows a similar shape but is slightly flatter at the beginning and the area under the curve is somewhat ,,shifted'' to the right. That is, at bigger guild sizes it is more likely that members will leave, than that new members will join. Of course eventually this distribution also diminishes to zero, as guilds do not grow forever.
+
+
+## Distribution of Maximum Guild Sizes
+
+The histogram of the maximal sizes that guilds have reached.
+
+```{r}
+wow %>%
+    group_by(guild) %>%
+    summarise(max_guild_members_count = max(guild_members_count, na.rm = TRUE)) %>%
+    filter(guild != -1) %>% 
+    ggplot() +
+    geom_histogram(aes(x = max_guild_members_count, y = (..count..) / sum(..count..)), size = 1.0, alpha = 0.6, bins = 40) +
+    geom_vline(xintercept = 500, color = "red", size = 1.0, alpha = 0.6) +
+    scale_y_continuous(labels = percent) +
+    theme_bw() +
+    labs(title = "Histogram of the Maximal Number of Guild Members for each Guild", x = "Maximal Number of Members", y = "Percentage of Guilds")
+wow %>% filter(guild != -1 & guild_members_count > 500) %>% 
+    distinct(guild) %>% select(guild, guild_members_count)
+```
+
+As shown, only a few guilds had more than 500 members. We can check out which guilds are these exactly and how many of them are there:
+
+```{r}
+wow %>% filter(guild != -1 & guild_members_count > 500) %>% 
+    distinct(guild) %>% select(guild, guild_members_count)
+```
+
+As it was kind of suspectable, only very few (_3_) guilds were responsible for all the guild entering/leaving events pertaining to remarkably large guilds.
+
+
+## Impact of the Guilds' Average Level
+
+### Distribution of the Average Level of Guild Members at Guild Events {.tabset}
+
+First we plot the distribution of the average level of guild members at guild events for the events' corresponding guilds.
+
+#### Guild Entering Events
+
+```{r}
+wow %>% 
+    filter(!is.na(avg_level) & (event == "Guild Entered" | event == "Guild Changed")) %>% 
+    select(avg_level) %>% 
+    ggplot() +
+    geom_density(aes(x = avg_level), color = "steelblue", fill = "steelblue", alpha = 0.6) + 
+    theme_bw() + 
+    labs(title = "Density of Guild Entering Events", x = "Average Level of Guild Members", y = "Density")
+```
+
+
+#### Guild Leaving Events
+
+```{r}
+wow %>% 
+    filter(!is.na(prev_guild_avg_lvl) & (event == "Guild Left" | event == "Guild Changed")) %>% 
+    select(prev_guild_avg_lvl) %>% 
+    ggplot() +
+    geom_density(aes(x = prev_guild_avg_lvl), color = "steelblue", fill = "steelblue", alpha = 0.6) +
+    theme_bw() + 
+    labs(title = "Density of Guild Leaving Events", x = "Average Level of Guild Members", y = "Density")
+```
+
+
+###
+
+The two plots are very similar. Guild events mostly belong to strong guilds, where the average level of members is close to the maximal level, but there is also a slight prominence for very low-level guilds.
+
+
+### 2D Density Plot of Guild Events by the Level of Avatars and the Average Level of Guilds {.tabset}
+
+We can also plot the 2D density plot of guild events by the members' average level in the corresponding guilds and the level of the avatars taking part in the events.
+
+
+#### Guild Entering Events
+
+```{r}
+wow %>% 
+    filter(!is.na(avg_level) & (event == "Guild Entered" | event == "Guild Changed")) %>% 
+    ggplot(aes(x = avg_level, y = level)) + 
+    stat_density2d(aes(alpha = ..level..), geom = "polygon") +
+    scale_alpha_continuous(limits = c(0,0.2), breaks = seq(0,0.2, by = 0.025))+
+    geom_point(colour = "red", alpha = 0.02)+
+    theme_bw() + 
+    labs(title = "2D Density Plot of Guild Entering Events", x = "Average Level of Guild Members", y = "Level of the Entering Avatar", alpha = "Density Level")
+```
+
+
+#### Guild Leaving Events
+
+```{r}
+wow %>% 
+    filter(!is.na(prev_guild_avg_lvl) & (event == "Guild Left" | event == "Guild Changed")) %>% 
+    ggplot(aes(x = prev_guild_avg_lvl, y = level)) + 
+    stat_density2d(aes(alpha = ..level..), geom = "polygon") +
+    scale_alpha_continuous(limits = c(0,0.2), breaks = seq(0, 0.2, by = 0.025)) +
+    geom_point(colour = "red", alpha = 0.02)+
+    theme_bw() + 
+    labs(title = "2D Density Plot of Guild Leaving Events", x = "Average Level of Guild Members", y = "Level of the Leaving Avatar", alpha = "Density Level")
+``` 
+
+
+###
+
+As with guilds, most of the avatars involved in guild events are high-level avatars, and there is also a more dense region for avatars with very low level. Additionally, it seems that there is a positive correlation between the level of the avatar and the average level of the guild members.
+
+
+## Impact of Races and Character Classes on Guild Entering Events {.tabset}
+
+We examine the distribution of guild entering events by the ratio of the entering avatar's race/class between the old members of the guild for each race and class. That is we want to examine whether the race and class of guild members affect the race and class of future members.
+
+We filter out guild _460_, as it seems kind of an extreme guild based on the previous findings and it might distort findings on other guilds significantly.
+
+```{r}
+get_avatar_group_plot_data <- function(current_col_value, col_name = c("race", "charclass")) {
+    col_name_2 <- gsub(" ", "", current_col_value, fixed = TRUE)
+    tmp <- wow %>%
+        filter(guild != 460 &
+                   guild != -1 &
+                   !is.na(guild_members_count) &
+                   guild_members_count > 0 &
+                   (event == "Guild Entered" | event == "Guild Changed") &
+                   ((col_name == "charclass" & charclass == current_col_value) | (col_name == "race" & race == current_col_value)))
+
+    if (col_name == "charclass") {
+        tmp <- tmp %>% group_by_(same_charclass_ratio_in_guild = interp(~ round(var / guild_members_count, 2), var = as.name(col_name_2)))
+    } else {
+        tmp <- tmp %>% group_by_(same_race_ratio_in_guild = interp(~ round(var / guild_members_count, 2), var = as.name(col_name_2)))
+    }
+    tmp <- tmp %>%
+        summarise("entered_avatars_count" = n(),
+                  "different_guilds_count" = length(unique(guild)),
+                  "top_1_guild" = max(table(guild)),
+                  "other_guilds_count" = entered_avatars_count - top_1_guild) %>% ungroup
+    tmp[, col_name] <- col_name_2
+    tmp
+}
+
+plot_by_race_ratio <- function(data = race_plot_data, 
+                               x_col = "same_race_ratio_in_guild", 
+                               y_col = "entered_avatars_count", color_col = "race", 
+                               x_axis_title = "", 
+                               main_title = "") {
+    ggplot(data, aes_string(x = x_col)) + 
+        geom_line(aes_string(y = y_col, color = color_col, group = color_col), size = 1.3, alpha = 0.5) + 
+        theme_bw() + 
+        scale_x_continuous(labels = percent) + 
+        labs(
+            title = main_title, 
+            x = x_axis_title, 
+            y = "Number of Joining Avatars")
+            
+}
+```
+
+
+### Impact of Races
+
+```{r}
+race_plot_data <- c()
+for (race_name in race_names) {
+    race_plot_data <- rbind(race_plot_data, get_avatar_group_plot_data(race_name, "race"))
+}
+ggplotly(plot_by_race_ratio(
+    x_axis_title = "Percent of the Entering Avatar's Race Between the Members of the Event's Corresponding Guild", 
+    main_title = "Impact of the Existing Guild Members' Race on the Race of Joining Avatars"))
+```
+
+
+### Impact of Character Classes
+
+```{r}
+charclass_plot_data <- c()
+for (charclass_name in charclass_names) {
+    charclass_plot_data <- rbind(charclass_plot_data, get_avatar_group_plot_data(charclass_name, "charclass"))
+}
+ggplotly(plot_by_race_ratio(
+    charclass_plot_data, 
+    "same_charclass_ratio_in_guild", 
+    color_col = "charclass", 
+    x_axis_title = "Percent of the Entering Avatar's Charclass Between the Members of the Corresponding Guild", 
+    main_title = "Impact of the Existing Guild Members' Charclass on the Charclass of Joining Avatars"))
+```
+
+
+##
+
+As can be seen, the most prominent peaks of races are somewhat at different positions and -- except for _Blood Elf_ -- the curves drop very quickly after the peak, which could mean, that there is a certain unique ratio for each race representing the ideal or average proportion of the race within guilds. However, the _Blood Elf_ guild kind of stands out of the others, it has multiple peaks and there are an apparent number of entering events even in guilds with very high ratio (including _100%_) of _Blood Elf_ members.
+
+This finding is not valid for character classes, as the lines of different character classes are jumbled, and the peaks are overlapping.
+
+
+## Impact of Guild and Avatar Activity on Guild Events {.tabset}
+
+Take a look at the relation between the activity of a guild and the activity of avatars entering those guilds. So we want to find out what is the correlation between the activity of avatars entering guilds and the average activity of the members of the corresponding guild.
+
+We are going to compute activity for an avatar as the average number of daily records in the last _N_ days, and for guilds as the average of the daily averages of the members' number of records for the last _N_ days. We are going to try out multiple values for _N_.
+
+We are going create 2D density plots and compute (Pearson) correlation strength and significance. To test the significance of the correlations we use the _cor.test_ function, which performs a t-test internally for the Pearson correlation coefficient.
+
+```{r}
+# Create a data.frame containg the average activity of the members of guilds for each day, when the guild existed
+# Get daily sum of activities for each guild
+guild_daily_activities <- wow %>%
+    mutate(guild_creation_date = ifelse(guild_creation, current_date, NA)) %>%
+    group_by(guild, current_date) %>%
+    summarise(activity = n(), new_guild = new_guild[1], guild_creation_date = guild_creation_date[1]) %>%
+    group_by() %>%
+    mutate(date = current_date)
+guild_daily_activities$current_date <- NULL
+
+# Join with data frame that contains daily guild statistics including number of members
+guild_daily_activities <- left_join(guild_daily_activities,
+                                    temporal_guild_stats %>%
+                                        select(guild, date, guild_members_count) %>%
+                                        mutate(date = date - 1, guild = as.numeric(guild)),
+                                    by = c("guild", "date"))
+
+# Although only those days were kept for every guild for which there was observed activity, it is still possible to have 0 guild_members_count value, because this value represent the number of members at the end of the corresponding day. Let's simply remove them and then get the daily averages.
+
+guild_daily_activities <- guild_daily_activities %>%
+    filter(guild != -1 & guild_members_count != 0) %>%
+    mutate(avg_daily_activity_of_members = activity / guild_members_count)
+
+# Create rows for every date when the guild existed, regardless having any activity on that day or not
+guild_daily_activities <- left_join(
+    tbl_df(data.frame(date = seq.Date(min_date, max_date, "days"))), 
+    guild_daily_activities,
+    by = "date") %>%
+    filter(!new_guild | guild_creation_date <= date) %>%
+    mutate(avg_daily_activity_of_members = ifelse(is.na(avg_daily_activity_of_members), 0, avg_daily_activity_of_members))
+
+# Create a similar DF for avatars, i.e. containing the average daily activity of the last N days by dates
+avatar_daily_activities <- wow %>%
+    group_by(avatar, current_date) %>%
+    summarise(daily_activity = n(), new_avatar = new_avatar[1], avatar_creation_date = activation_date[1]) %>%
+    group_by() %>%
+    mutate(date = current_date)
+avatar_daily_activities$current_date <- NULL
+
+# Create rows for every date when the avatar existed, regardless having any activity on that day or not
+avatar_daily_activities <- left_join(
+    tbl_df(data.frame(date = seq.Date(min_date, max_date, "days"))),
+    avatar_daily_activities,
+    by = "date") %>%
+    filter(!new_avatar | avatar_creation_date <= date)
+
+# Get the average of daily averages for the last N days
+aggregate_means <- function(daily_means, group_by_col, daily_mean_col, N) {
+    daily_means <- arrange(daily_means, date)
+    result <- daily_means %>%
+        group_by_(group_by_col) %>%
+        do({
+            current_df <- .
+            avg_last_N_day <- c()
+            if (N < length(.$date)) {
+                avg_last_N_day <- sapply((1 + N):nrow(current_df), 
+                                         function(index) { 
+                                             mean((current_df[[daily_mean_col]])[(index - N - 1):(index - 1)])
+                                             }
+                                         )
+                data.frame(date = .$date[-(1:N)], avg_last_N_day = avg_last_N_day)
+            } else {
+                data.frame(date = c(), avg_last_N_day = c())
+            }
+        })
+    ungroup(result)
+}
+
+get_activity_stats <- function(days_n, guild_daily_activities, avatars_daily_activities) {
+    # Get averages for last days_n days
+    
+    # For guilds
+    guild_daily_activities <- aggregate_means(
+        guild_daily_activities, "guild", "avg_daily_activity_of_members", days_n)
+    
+    # For avatars
+    avatar_daily_activities <- aggregate_means(
+        avatars_daily_activities, "avatar", "daily_activity", days_n)
+
+    # Combine stats into one DF together guild entering events
+    activities_combined <- left_join(
+        wow %>% filter(event == "Guild Entered") %>%
+            select(current_date, avatar, guild, level, guild_members_count) %>%
+            mutate(date = current_date),
+        guild_daily_activities,
+        by = c("date", "guild")
+    )
+
+    activities_combined$avg_last_N_day_guild <- activities_combined$avg_last_N_day
+    activities_combined$avg_last_N_day <- NULL
+
+    activities_combined <- left_join(activities_combined, avatar_daily_activities, by = c("date", "avatar"))
+    activities_combined$avg_last_N_day_avatar <- activities_combined$avg_last_N_day
+    activities_combined$avg_last_N_day <- NULL
+    activities_combined$current_date <- NULL
+    
+    activities_combined_filtered <- activities_combined %>%
+        filter(!is.na(avg_last_N_day_guild) &
+                   (date > (min_date + days_n)) &
+                   !is.na(activities_combined$avg_last_N_day_avatar))
+    plot <- ggplot(activities_combined_filtered, aes(x = avg_last_N_day_avatar, y = avg_last_N_day_guild)) +
+        stat_density2d(aes(alpha = ..level..), geom = "polygon") +
+        scale_alpha_continuous(limits = c(0,0.1), breaks = seq(0,0.1, by = 0.01))+
+        geom_point(colour = "red",alpha = 0.02) +
+        xlim(0, 100) +
+        ylim(0, 25) +
+        theme_bw() + 
+        labs(
+            title = paste("Density of Guild Entering Events By the Avatar's and Guild's Activities in the Last", days_n, "day(s)"), 
+            x = "Average Daily Activity of the Members of the Event's Corresponding Guild", 
+            y = "Average Daily Activity of the Entering Avatar", 
+            alpha = "Density Level")
+    correlation <- cor(activities_combined_filtered$avg_last_N_day_avatar, activities_combined_filtered$avg_last_N_day_guild)
+    cor_test <- cor.test(activities_combined_filtered$avg_last_N_day_avatar, activities_combined_filtered$avg_last_N_day_guild)
+    list(plot = plot, correlation = correlation, cor_test = cor_test, df = activities_combined_filtered)
+}
+
+number_of_N_values <- 5
+```
+
+
+### N = 1
+
+```{r}
+N <- 1
+activities_at_entering_events <- get_activity_stats(N, guild_daily_activities, avatar_daily_activities)
+activities_at_entering_events[["plot"]]
+paste("Correlation =", activities_at_entering_events[["correlation"]])
+paste("Bonferroni-corrected p-value for correlation test =", activities_at_entering_events[["cor_test"]]$p.value * number_of_N_values)
+```
+                                                                                                                         
+
+### N = 2
+
+```{r}
+N <- 2
+activities_at_entering_events <- get_activity_stats(N, guild_daily_activities, avatar_daily_activities)
+activities_at_entering_events[["plot"]]
+paste("Correlation =", activities_at_entering_events[["correlation"]])
+paste("Bonferroni-corrected p-value for correlation test =", activities_at_entering_events[["cor_test"]]$p.value * number_of_N_values)
+```
+
+### N = 3
+
+```{r}
+N <- 3
+activities_at_entering_events <- get_activity_stats(N, guild_daily_activities, avatar_daily_activities)
+activities_at_entering_events[["plot"]]
+paste("Correlation =", activities_at_entering_events[["correlation"]])
+paste("Bonferroni-corrected p-value for correlation test =", activities_at_entering_events[["cor_test"]]$p.value * number_of_N_values)
+```
+
+### N = 4
+
+```{r}
+N <- 4
+activities_at_entering_events <- get_activity_stats(N, guild_daily_activities, avatar_daily_activities)
+activities_at_entering_events[["plot"]]
+paste("Correlation =", activities_at_entering_events[["correlation"]])
+paste("Bonferroni-corrected p-value for correlation test =", activities_at_entering_events[["cor_test"]]$p.value * number_of_N_values)
+```
+
+### N = 5
+
+```{r}
+N <- 5
+activities_at_entering_events <- get_activity_stats(N, guild_daily_activities, avatar_daily_activities)
+activities_at_entering_events[["plot"]]
+paste("Correlation =", activities_at_entering_events[["correlation"]])
+paste("Bonferroni-corrected p-value for correlation test =", activities_at_entering_events[["cor_test"]]$p.value * number_of_N_values)
+```
+
+
+##
+
+It can be seen that there is a correlation between the activity of guilds and the activity of entering avatars, and the correlation is significant at significance level _0.05_ since the Bonferroni-corrected p-values of the t-tests for correlation were below _0.05_ for all tests. (I.e. the null hypotheses asserting there is no correlation can be rejected.) The correlation was highest for _N=3_.
+
+
+# Conclusions
+
+Many of the computations presented in this analysis are not totally accurate, as we made some approximations in order to make computations more feasible. However, the presented observations still might be sufficient to grasp some of the peculiarities and characteristics of the data.
+
+There are still many things to investigate regarding guild dynamics. E.g. I am planning to do some experiments on how these dynamics (guild events) can be predicted based on the available data.
+
+I would be more than happy to have your feedback and suggestions to improve the current analysis or any ideas to move on to in the future.
+

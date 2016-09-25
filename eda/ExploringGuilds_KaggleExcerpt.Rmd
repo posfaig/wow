@@ -1,0 +1,173 @@
+---
+title: "Exploring Guilds (Excerpt)"
+author: "Gergely Pósfai"
+date: "September 25, 2016"
+output: 
+    html_document:
+        toc: true
+        highlight: zenburn
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, fig.width = 9, fig.height = 5)
+```
+
+
+# Introduction
+
+_This report is just an excerpt. Unfortunately Kaggle has a runtime limit of 20 minutes for kernels, and the complete script takes more time to execute (~few hours on my machine), as it includes the computation of various features over time, which can take quite long. So to make things available for everyone I put the [complete report on RPubs](http://rpubs.com/posfaig/wow_exploring_guilds) and the [codes on github](https://github.com/posfaig/wow)._
+
+This analysis focuses on guilds, especially on the dynamics of guilds, that is how guilds change over time, how avatars enter or leave guilds in the game.
+
+__Many of the ideas, used R packages, code snipets came from other analyses, like the analysis of [Thiago Balbo](https://www.kaggle.com/thibalbo), [33Vito](https://www.kaggle.com/tonyliu) and others. Their contributions were a huge help in making this report. So many thanks.__
+
+
+# Initial Setup, Data Import, Auxiliary Variables
+
+```{r, cache = FALSE}
+library(lubridate)
+library(stringr)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(visNetwork)
+library(scales)
+library(lazyeval)
+library(dygraphs)
+library(tidyr)
+```
+
+```{r}
+set.seed(0)
+data_dir <- "../../../data/raw/"
+
+#wow <- tbl_df(fread("../input/wowah_data.csv"))
+wow <- tbl_df(fread(paste(data_dir, "wowah_data.csv", sep = "")))
+names(wow) <- trimws(names(wow))
+wow$race <- gsub(" ", "", wow$race, fixed = TRUE)
+wow$charclass <- gsub(" ", "", wow$charclass, fixed = TRUE)
+
+# Create a new column for identifying avatars
+wow$avatar <- with(wow, paste(char, race, charclass, sep = "."))
+
+# Other columns
+wow$timestamp <- mdy_hms(wow$timestamp)
+wow <- arrange(wow, timestamp)
+wow$current_date <- as.Date(wow$timestamp)
+#wow$hour <- hour(wow$timestamp)
+#wow$month <- format(wow$current_date, "%b")
+# Create a new column with the activation date of each avatar
+wow <- wow %>% group_by(avatar) %>% mutate(activation_date = min(current_date)) %>% group_by()
+
+# Create new column for identifying avatars that were created during the observed period (i.e. avatars who were seen at level 1, or level 55 for Death Knight avatars)
+wow <- wow %>% group_by(avatar) %>% mutate(new_avatar = (min(level) == 1 | (min(level) == 55 & charclass[1] == "DeathKnight"))) %>% group_by
+
+min_date <- min(wow$current_date)
+max_date <- max(wow$current_date)
+race_names <- unique(wow$race)
+charclass_names <- unique(wow$charclass)
+```
+
+
+# Basic Characteristics
+
+How many different guilds were observed?
+```{r}
+wow %>% filter(guild >= 0) %>% summarise("Number of guilds" = n_distinct(guild))
+```
+
+Number of avatars who were member of at least one guild:
+```{r}
+avatar_count_guilds <- nrow(wow %>% filter(guild >= 0) %>% distinct(avatar))
+avatar_count_no_guilds <- length(unique(wow$avatar)) - avatar_count_guilds
+c("Was member" = avatar_count_guilds, "Never joined" = avatar_count_no_guilds)
+```
+
+Percentage of avatars who were in a guild at least once on a certain level by levels:
+```{r}
+ggplotly(wow %>% group_by(level, avatar) %>%
+    summarise(in_guild = max(guild) >= 0) %>%
+    summarise(in_guild_percent = sum(in_guild) / length(unique(avatar))) %>%
+    ggplot(aes(x = level)) +
+    geom_line(aes(y = in_guild_percent), color = 'steelblue') +
+    scale_y_continuous(labels = percent_format()) + 
+    theme_bw() + labs(title = "Percentage of Avatars in Guilds by Levels", x = "Level", y = "Percentage of Avatars in Guilds"))
+```
+
+There is a significant drop at level _55_, which is presumably caused by the _Death Knight_ class (introduced in WotLK, Nov 13, 2008), which starts at level _55_.
+
+Distribution of the number of different guilds avatars were part of:
+```{r}
+wow %>% 
+    group_by(avatar) %>%
+    summarise(number_of_guilds = n_distinct(guild)-1) %>% 
+    arrange(desc(number_of_guilds)) %>%
+    ggplot(aes(x = number_of_guilds)) + geom_density(color = "steelblue", fill = "steelblue", alpha = 0.6) + 
+    theme_bw() + 
+    labs(title = "Distribution of the Number of Different Guilds Avatars Were Member of", x = "Number of Different Guilds", y = "Density")
+```
+
+At what level avatars enter their first guild (only for new avatars):
+```{r}
+wow %>% filter(new_avatar & guild >= 0) %>% group_by(avatar) %>%
+    summarise(lvl_at_first_guild = min(level)) %>% 
+    ggplot(aes(x=lvl_at_first_guild)) + 
+    geom_density(color = "steelblue", fill = "steelblue", alpha = 0.6) + 
+    theme_bw() + 
+    labs(title = "Distribution of Levels When Avatars Enter Their First Guild", x = "Level When Entering First Guild", y = "Density")
+```
+
+Distribution of the number of members of guilds. More precisely, for each guild the number of avatars who were a member of the guild at least once:
+
+```{r}
+guild_members_count <- wow %>% 
+    filter(guild >= 0) %>% 
+    group_by(guild) %>% 
+    summarise(members_count = n_distinct(avatar))
+summary(guild_members_count$members_count)
+ggplot(guild_members_count, aes(x = members_count)) + 
+    geom_density(color = "steelblue", fill = "steelblue", alpha = 0.6) + 
+    xlim(1, 50) +
+    theme_bw() + 
+    labs(title = "Distribution of the Number of Guild Members by Guilds", x = "Number of Guild Members", y = "Density")
+```
+
+_Note_: in the density plot above only guilds with less than or equal to _50_ members are shown in order to make the slope of the density's drop more visible.
+
+
+# Introducing Guild Events
+
+We create a new column indicating the events of entering and leaving guilds. The new column can take one of four values:
+
+* __No Event__: no event.
+* __Guild Left__: the avatar left his/her guild and did not enter a new one.
+* __Guild Entered__: the avatar entered a guild without leaving one.
+* __Guild Changed__: the avatar changed his/her guild, i.e. left his/her current guild and entered a new one immediately.
+
+To do this, first we create a *prev_guild* column which indicates the last observed guild of the current avatar. If there is no previous observation for the avatar, then the value is _-2_.
+```{r}
+wow <- wow %>% group_by(avatar) %>% mutate(prev_guild = lag(guild)) %>% group_by
+wow$prev_guild[is.na(wow$prev_guild)] <- -2
+```
+
+Now create the _event_ column:
+```{r}
+wow <- wow %>%
+    mutate(event = ifelse(guild == prev_guild, "No Event", "Guild Changed")) %>%
+    mutate(event = ifelse(event == "Guild Changed" & prev_guild == -1, "Guild Entered", event)) %>%
+    mutate(event = ifelse(event == "Guild Changed" & guild == -1, "Guild Left", event)) %>%
+    mutate(event = ifelse(prev_guild == -2, ifelse((guild != -1 & new_avatar), "Guild Entered", "No Event"), event))
+summary(factor(wow$event))
+```
+
+
+# Remaining Parts of the Report
+
+The remaining parts of the complete report focus on the dynamic characteristics of guilds, especially  guild events.
+
+[Complete report at RPubs.](http://rpubs.com/posfaig/wow_exploring_guilds)
+
+[Codes on github.](https://github.com/posfaig/wow)
+
