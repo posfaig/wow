@@ -41,10 +41,8 @@ library(tidyr)
 
 ```{r}
 set.seed(0)
-data_dir <- "../../../data/raw/"
 
-#wow <- tbl_df(fread("../input/wowah_data.csv"))
-wow <- tbl_df(fread(paste(data_dir, "wowah_data.csv", sep = "")))
+wow <- tbl_df(fread("../input/wowah_data.csv"))
 names(wow) <- trimws(names(wow))
 wow$race <- gsub(" ", "", wow$race, fixed = TRUE)
 wow$charclass <- gsub(" ", "", wow$charclass, fixed = TRUE)
