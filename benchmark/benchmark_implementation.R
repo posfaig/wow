@@ -41,7 +41,9 @@ create_graph <- function(data, pred_date){
 	
 	## Edges from collaboration
 	print("Create collaboration edges")
-	# Edges are between players who occured in the same zone at the same time (snapshot). Each day when there was a cooccurence is assigned a weight equal to the number of cooccurence snapshots (~ collaboration time). Then these initial weights are decreased according to time decay and summed for each edge.
+	# Edges are between players who occured in the same zone at the same time (snapshot).
+	# Weights are proportional to the duration of collaboration
+	# Collaboration durations are also decreased according to a time-decaying function
 	#
 	
 	tmp <- interactions %>% 
