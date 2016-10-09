@@ -18,13 +18,13 @@ theta <- 0.3  # the value was determined based on many cross validation experime
 create_graph <- function(data, pred_date){
 	pred_date <- as.Date(pred_date)
 	
+	# keep only the events before the current prediction date
+	data <- data %>% filter(current_date < pred_date)
+	
 	# filter out records from horde cities (as only horde avatars are in the dataset)
 	data_with_cities <- data
 	horde_capitals <- c("Shattrath City", "Orgrimmar", "Silvermoon City", "Thunder Bluff", "Undercity", "Dalaran")
 	data <- data %>% filter(!(zone %in% horde_capitals))
-	
-	# keep only the events before the current prediction date
-	data <- data %>% filter(current_date < pred_date)
 	
 	### Edges:
 	edges <- data.frame(node_1 = "-", node_2 = "-", weight = 0)  # create df with auxiliary row
