@@ -16,11 +16,10 @@ theta <- 0.3  # the value was determined based on many cross validation experime
 
 # Create the social graph for a given prediction date based on the observed data
 create_graph <- function(data, pred_date){
-	min_time_decay_weight <- 0.00001
-	t_max <- ceiling(log(min_time_decay_weight / theta, base = (1 - theta)))
 	pred_date <- as.Date(pred_date)
 	
 	# filter out records from horde cities (as only horde avatars are in the dataset)
+	data_with_cities <- data
 	horde_capitals <- c("Shattrath City", "Orgrimmar", "Silvermoon City", "Thunder Bluff", "Undercity", "Dalaran")
 	data <- data %>% filter(!(zone %in% horde_capitals))
 	
@@ -58,7 +57,7 @@ create_graph <- function(data, pred_date){
 	# We also add a guild node with id -1 to represent how much time did avatars play outside of guilds recently.
 	
 	# Get the guild members at prediction date 
-        guild_members <- data %>% group_by(avatar) %>% slice(n()) %>% group_by() %>% filter(guild != -1)
+        guild_members <- data_with_cities %>% group_by(avatar) %>% slice(n()) %>% group_by() %>% filter(guild != -1)
         avatar_date_guild_df <- data %>% 
         	select(avatar, current_date, guild) %>% 
         	group_by(avatar, current_date, guild) %>%
