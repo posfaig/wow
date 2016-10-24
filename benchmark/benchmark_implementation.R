@@ -349,7 +349,7 @@ train <- function(dataset){
 	rf_model <- randomForest(
             x = predictors,
             y = targets,
-            data = dataset,
+            #data = dataset, ##????
             ntree = 10,  # as it is in the paper
             importance = TRUE
             #do.trace = TRUE
@@ -431,6 +431,7 @@ write_results_to_file <- function(predictions_df, results_cv, results_test) {
 
 # Do cross validation on a training dataset
 do_cv <- function(train_data, k = 10){
+	set.seed(0)
 	folds <- cvFolds(n = nrow(train_data), K = k, R = 1)
 	predictions <- data.frame()
 	for (i in 1:k){
