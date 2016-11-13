@@ -5,7 +5,7 @@
 ##########################################################################
 
 
-get_model_xgboost_with_fclus <- function(membership_threshold = 0.2, params = list()){
+get_model_xgboost_with_fclus <- function(params = list()){
     model_name <- "xgboost_with_fuzzy_clustering"
     desc <- "xgboost with fuzzy clustering"
     models <- list()
@@ -49,6 +49,12 @@ get_model_xgboost_with_fclus <- function(membership_threshold = 0.2, params = li
             data <- data %>% select_(.dots = params[["final_predictor_columns"]])
         }
 
+        # If predictors were specified keep only those together with the cluster columns
+        clust_mem_cols <- names(data)[startsWith(names(data), "Clus")]
+        if (!is.null(params[["predictors"]])){
+            data <- data %>% select_(.dots = c(params[["predictors"]], clust_mem_cols))
+        }
+
         # convert integers to double for xgboost
         sapply(names(data), function(col_name){
             data[[col_name]] <<- as.numeric(data[[col_name]])
@@ -68,7 +74,8 @@ get_model_xgboost_with_fclus <- function(membership_threshold = 0.2, params = li
         train_data_preprocessed <- preprocess(train_data, TRUE)
 
         clust_mem_cols <- names(train_data_preprocessed)[startsWith(names(train_data_preprocessed), "Clus")]
-
+        print(paste("Number of clusters:", length(clust_mem_cols)))
+        membership_threshold <- 1.0 / length(clust_mem_cols)
 
         sapply(clust_mem_cols, function(cluster_name){
 
@@ -79,12 +86,30 @@ get_model_xgboost_with_fclus <- function(membership_threshold = 0.2, params = li
             # exclude cluster columns
             current_train_data <- current_train_data[, !(names(current_train_data) %in% clust_mem_cols)]
 
-            models[[cluster_name]] <<- xgboost(
-                as.matrix(current_train_data),
-                current_targets,
-                nrounds = 50,
-                objective = "binary:logistic",
-                max.depth = 50)
+            if (!exists("opt_early_stopping_value_xgb")){
+                opt_early_stopping_value_xgb <- 4
+            }
+
+            print("Distribution of target variable")
+            print(table(current_targets))
+
+            if (sum(current_targets == 0) == length(current_targets)){
+                # all targets are 0
+                models[[cluster_name]] <<- 1
+            } else if (sum(current_targets == 1) == length(current_targets)){
+                # all targets are 1
+                models[[cluster_name]] <<- 0
+            } else {
+
+                models[[cluster_name]] <<- xgboost(
+                    as.matrix(current_train_data),
+                    current_targets,
+                    nrounds = 50,
+                    objective = "binary:logistic",
+                    max.depth = 50,
+                    eval_metric = "auc",
+                    early.stop.round = opt_early_stopping_value_xgb)
+            }
 
         })
 
@@ -101,10 +126,16 @@ get_model_xgboost_with_fclus <- function(membership_threshold = 0.2, params = li
         test_data_no_cluster <- test_data_preprocessed[, !(names(test_data_preprocessed) %in% clust_mem_cols)]
 
         cluster_predictions <- sapply(clust_mem_cols, function(cluster_name){
-            predict(models[[cluster_name]], as.matrix(test_data_no_cluster))
+            current_model <- models[[cluster_name]]
+            if (is.numeric(current_model)){
+                result <- rep(current_model, nrow(test_data_no_cluster))
+            } else {
+                result <- predict(current_model, as.matrix(test_data_no_cluster))
+            }
+            result
         })
 
-        cluster_memberships <- (test_data %>% select_(.dots = clust_mem_cols))
+        cluster_memberships <- test_data %>% select_(.dots = clust_mem_cols)
         predictions <- cluster_predictions * cluster_memberships
         predictions <- rowSums(predictions) / rowSums(cluster_memberships)
     }

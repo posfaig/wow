@@ -39,6 +39,14 @@ get_perf_measures <- function(targets, predictions, decision_threshold = 0.5){
          roc_plot = roc_plot)
 }
 
+# Get the f-score for a given decision threshold and a set of predictions with their corresponding target labels
+fscore_for_decision_threshold <- function(current_threshold, predictions){
+    results <- get_perf_measures(predictions$label,
+                                 predictions$prediction,
+                                 current_threshold)
+    results$f_score
+}
+
 # Write results and predictions to file
 write_results_to_file <- function(predictions_df, results, model_dir) {
 

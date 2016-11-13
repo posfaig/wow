@@ -62,8 +62,8 @@ g_guild_created_recently_days <- 7
 
 # percentage and number of the guild members of the same class as the class of the current avatar
 # Density: connections between guild members
-# Maximum sub-graph size: largest interconnected cluster of members in a guild’s social network.
-# Mass count: the number of sub-graphs larger than three in a guild’s social network, that is, how many independent sub-units there are
+# Maximum sub-graph size: largest interconnected cluster of members in a guild's social network.
+# Mass count: the number of sub-graphs larger than three in a guild's social network, that is, how many independent sub-units there are
 # average/median daily M-wise collaboration time in the last N days (time when at least M members were simultanously active in the guild in the same zone, times are summed for different zones, that is if the conditions are satisfied for multiple zones at the same time, we sum the collaboration time corresponding to each zone)
 # Average time spent in "instances" (dungeons): an indicator of the importance of planned group activities in a guild, as opposed to ad hoc quest parties and individual quests.
 g_time_in_dungeons_in_last_days <- 5
@@ -85,8 +85,9 @@ g_time_in_dungeons_in_last_days <- 5
 
 ##### Compute interactions (collaborations) between avatars
 # Takes ~5 hours on my machine
-# source("benchmark/compute_interactions.R")
-
+if (!file.exists("guild_quitting/benchmark/number_interactions_by_days.csv")){
+    source("guild_quitting/benchmark/compute_interactions.R")
+}
 
 ##### Helper functions
 
@@ -413,7 +414,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
 
     ## Feature: clustering coeff
     ## Feature: size of the largest clique in the guild's graph
-    ## Feature: Mass count: the number of cliques larger than three in the guild’s graph (~how many independent sub-units there are)
+    ## Feature: Mass count: the number of cliques larger than three in the guild's graph (~how many independent sub-units there are)
 
     tmp <- edges_intra %>% group_by(guild) %>% do({
         current_df <- .
@@ -498,6 +499,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
 ##### MAIN #####
 
 source("common/init.R")
+source("common/streamline_functions_for_modeling.R")
 
 ### Add zone type column
 zones <- read_csv(paste(data_dir, "zones.csv", sep = ""))
@@ -514,16 +516,17 @@ training_data <- get_features_for_pred_dates(
     prediction_dates_train,
     create_intraguild_graphs,
     compute_features_and_labels)
+# Write results to files
+write_csv(training_data, "guild_quitting/features_train.csv")
+rm(training_data)
+
 test_data <- get_features_for_pred_dates(
     prediction_dates_test,
     create_intraguild_graphs,
     compute_features_and_labels)
-
-### Write results to files
-write_csv(training_data, "guild_quitting/features_train.csv")
+# Write results to files
 write_csv(test_data, "guild_quitting/features_test.csv")
-
-
+rm(test_data)
 
 ###################
 # TEST

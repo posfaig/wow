@@ -7,7 +7,7 @@
 library(dplyr)
 library(fclust)
 
-fuzzy_clustering_of_guilds <- function(dataset, num_clusters = 4, remove_guild_cols = FALSE){
+fuzzy_clustering_of_guilds <- function(dataset, num_clusters = 4, fuzziness = 3.0, remove_guild_cols = FALSE){
     guild_feature_names <- c(
         "guild_members",
         "members_left",
@@ -37,10 +37,10 @@ fuzzy_clustering_of_guilds <- function(dataset, num_clusters = 4, remove_guild_c
         select_(.dots = c("guild", "pred_date", guild_feature_names)) %>%
         mutate(guild_created_recently = as.numeric(guild_created_recently))
 
-
+    set.seed(0)
     guild_clusters <- FKM(guild_features %>% mutate(guild = NULL, pred_date = NULL),
                           k = num_clusters,
-                          m = 3,
+                          m = fuzziness,
                           stand = 1,
                           RS = 5)
 

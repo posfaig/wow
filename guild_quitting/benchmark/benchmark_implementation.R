@@ -8,7 +8,7 @@ set.seed(0)
 
 ##### Compute collaborations between player #####
 # Takes ~5 hours on my machine
-#source("benchmark/compute_interactions.R")
+#source("guild_quitting/benchmark/compute_interactions.R")
 
 ##### Parameters #####
 
@@ -414,7 +414,9 @@ training_data <- get_features_for_pred_dates(
 ### Do cross-validation on training data
 print("Do cross-validation on training data")
 predictions_train_cv <- do_cv(training_data, get_model_benchmark)
-results_cv <- get_perf_measures(predictions$label, predictions$prediction)
+# Get optimal decision threshold:
+opt_threshold_benchmark <- optimize(fscore_for_decision_threshold, c(0, 1.0), predictions_train_cv, maximum = TRUE, tol = 0.001)
+results_cv <- get_perf_measures(predictions_train_cv$label, predictions_train_cv$prediction, opt_threshold_benchmark$maximum)
 
 
 ### Get performance measures on the final test set
@@ -432,7 +434,7 @@ predictions <- data.frame(
     label = test_data$label,
     prediction = benchmark_wrapper$predict(test_data))
 
-results_test <- get_perf_measures(predictions$label, predictions$prediction)
+results_test <- get_perf_measures(predictions$label, predictions$prediction, opt_threshold_benchmark$maximum)
 
 ### Write results to files
 write_results_to_file(predictions_train_cv, results_cv, paste("guild_quitting/", "benchmark", "/train_cv", sep = ""))

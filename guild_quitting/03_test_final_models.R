@@ -8,6 +8,10 @@
 
 ##### MAIN #####
 
+# Get set of selected predictors
+opt_predictors <- read_csv("generated/results/guild_quitting/xgboost/train_cv/predictors.csv") %>%
+    collect %>% .[["predictor"]]
+
 # Get train dataset
 train_data <- read_csv("guild_quitting/features_train.csv")
 train_data$race <- factor(train_data$race)
@@ -22,7 +26,7 @@ test_data$guild_created_recently <- factor(test_data$guild_created_recently)
 
 # Get performance measures on final test set
 print("Get performance measures on final test set")
-xgboost_wrapper <- get_model_xgboost()
+xgboost_wrapper <- get_model_xgboost(list(predictors = opt_predictors))
 xgboost_wrapper$build(train_data)
 
 predictions <- data.frame(
@@ -31,7 +35,7 @@ predictions <- data.frame(
     label = test_data$label,
     prediction = xgboost_wrapper$predict(test_data))
 
-results_test <- get_perf_measures(predictions$label, predictions$prediction)
+results_test <- get_perf_measures(predictions$label, predictions$prediction, opt_threshold_xgb$maximum)
 write_results_to_file(predictions, results_test, paste("guild_quitting/", xgboost_wrapper$model_name(), "/test", sep = ""))
 
 
