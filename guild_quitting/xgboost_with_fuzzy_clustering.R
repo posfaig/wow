@@ -79,38 +79,18 @@ get_model_xgboost_with_fclus <- function(params = list()){
 
         sapply(clust_mem_cols, function(cluster_name){
 
-            # get training set for cluster
-            current_train_data <- train_data_preprocessed[train_data_preprocessed[[cluster_name]] >= membership_threshold,]
-            current_targets <- targets[train_data_preprocessed[[cluster_name]] >= membership_threshold]
+            # Exclude cluster columns
+            current_train_data <- train_data_preprocessed[, !(names(train_data_preprocessed) %in% clust_mem_cols)]
 
-            # exclude cluster columns
-            current_train_data <- current_train_data[, !(names(current_train_data) %in% clust_mem_cols)]
-
-            if (!exists("opt_early_stopping_value_xgb")){
-                opt_early_stopping_value_xgb <- 4
-            }
-
-            print("Distribution of target variable")
-            print(table(current_targets))
-
-            if (sum(current_targets == 0) == length(current_targets)){
-                # all targets are 0
-                models[[cluster_name]] <<- 1
-            } else if (sum(current_targets == 1) == length(current_targets)){
-                # all targets are 1
-                models[[cluster_name]] <<- 0
-            } else {
-
-                models[[cluster_name]] <<- xgboost(
-                    as.matrix(current_train_data),
-                    current_targets,
-                    nrounds = 50,
-                    objective = "binary:logistic",
-                    max.depth = 50,
-                    eval_metric = "auc",
-                    early.stop.round = opt_early_stopping_value_xgb)
-            }
-
+            # Build model with weighted instances
+            dat <- xgb.DMatrix(
+                as.matrix(current_train_data),
+                label = targets,
+                weight = (train_data_preprocessed[[cluster_name]]))
+            models[[cluster_name]] <<- xgb.train(list(),
+                             data = dat,
+                             nrounds = 100,
+                             objective = "binary:logistic")
         })
 
         models
@@ -150,4 +130,61 @@ get_model_xgboost_with_fclus <- function(params = list()){
     )
 
 }
+
+
+
+do_cv_with_fuzzy_clustering <- function(train_data, current_model_constructor, num_clusters, fuzziness, features_to_keep, ..., k = 8){
+    set.seed(0)
+
+    # Create indecies for rolling forecasting origin
+    min_date_index <- length(unique(train_data$pred_date)) - k + 1
+    train_index_list <- lapply(min_date_index:length(sort(unique(train_data$pred_date))), function(x){which(as.numeric(factor(train_data$pred_date)) < x)})
+    test_index_list <- lapply(min_date_index:length(sort(unique(train_data$pred_date))), function(x){which(as.numeric(factor(train_data$pred_date)) == x)})
+
+    predictions <- data.frame()
+    for (i in 1:length(train_index_list)){
+        # get train and test sets of current fold
+        current_train_data <- train_data[train_index_list[[i]],]
+        current_test_data <- train_data[test_index_list[[i]],]
+
+        ### Fuzzy-Clustering of Guilds
+        fuzzy_clusters <- fuzzy_clustering_of_guilds(
+            rbind(current_train_data, current_test_data),
+            num_clusters,
+            fuzziness)
+        data_with_fuzzy_clusters <- fuzzy_clusters$data
+
+        # Keep only relevant features
+        clust_mem_cols <- names(data_with_fuzzy_clusters)[startsWith(names(data_with_fuzzy_clusters), "Clus")]
+        features_to_keep <- unique(c(clust_mem_cols, features_to_keep))
+        data_with_fuzzy_clusters <- data_with_fuzzy_clusters[,(names(data_with_fuzzy_clusters) %in% features_to_keep)]
+
+        # Re-split the data after clutering
+        current_train_data <- data_with_fuzzy_clusters[1:nrow(current_train_data),]
+        current_test_data <- data_with_fuzzy_clusters[-1 * (1:nrow(current_train_data)),]
+
+        # Learn model
+        current_model <- current_model_constructor()
+        current_model$build(current_train_data, ...)
+
+        # Predict with the current model
+        current_predictions <- current_model$predict(current_test_data)
+
+
+        if(nrow(predictions) == 0){
+            predictions <- data.frame(avatar = current_test_data$avatar,
+                                      pred_date = current_test_data$pred_date,
+                                      label = current_test_data$label,
+                                      prediction = current_predictions)
+        } else {
+            predictions <- rbind(predictions,
+                                 data.frame(avatar = current_test_data$avatar,
+                                            pred_date = current_test_data$pred_date,
+                                            label = current_test_data$label,
+                                            prediction = current_predictions))
+        }
+    }
+    predictions
+}
+
 

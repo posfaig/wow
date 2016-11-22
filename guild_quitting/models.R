@@ -1,17 +1,11 @@
 ######################################################
 ###
-### Functions for Building and Evaluating Models
+### Functio for Building and Evaluating XGBoost Model
 ###
 ######################################################
 
 library(dplyr)
 library(xgboost)
-
-##### BUILD MODELS AND MAKE PREDICTIONS #####
-
-##########################################
-### XGBoost
-##########################################
 
 get_model_xgboost <- function(params = list()){
     model_name <- "xgboost"
@@ -28,11 +22,6 @@ get_model_xgboost <- function(params = list()){
 
         # convert factors to numeric
         data <- convert_factors_to_numeric(data)
-
-        # If predictors were specified keep only those
-        if (!is.null(params[["predictors"]])){
-            data <- data %>% select_(.dots = params[["predictors"]])
-        }
 
         # scale data
         if (is_train){
@@ -84,11 +73,9 @@ get_model_xgboost <- function(params = list()){
         model <<- xgboost(
             as.matrix(train_data_preprocessed),
             targets,
-            nrounds = 50,
             objective = "binary:logistic",
-            max.depth = 2,
-            eval_metric = "auc",
-            early.stop.round = early_stop_round)
+            nrounds = 100,
+            eval_metric = "auc")
 
         # dat <- xgb.DMatrix(as.matrix(train_data_preprocessed), label = targets)
         # model <<- xgb.train(list(eta = 0.3,

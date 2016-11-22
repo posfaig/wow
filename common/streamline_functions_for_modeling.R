@@ -30,12 +30,12 @@ get_features_for_pred_dates <- function(pred_dates, graph_creating_function, fea
 
 
 # Do resampling procedure similar to rolling forecasting origin on a training dataset
-do_cv <- function(train_data, current_model_constructor, params = list(), ..., k = 8){
+do_cv <- function(train_data, current_model_constructor, ..., k = 8){
     set.seed(0)
 
     min_date_index <- length(unique(train_data$pred_date)) - k + 1
-    train_index_list <- lapply(min_date_index:length(unique(train_data$pred_date)), function(x){which(as.numeric(factor(train_data$pred_date)) < x)})
-    test_index_list <- lapply(min_date_index:length(unique(train_data$pred_date)), function(x){which(as.numeric(factor(train_data$pred_date)) == x)})
+    train_index_list <- lapply(min_date_index:length(sort(unique(train_data$pred_date))), function(x){which(as.numeric(factor(train_data$pred_date)) < x)})
+    test_index_list <- lapply(min_date_index:length(sort(unique(train_data$pred_date))), function(x){which(as.numeric(factor(train_data$pred_date)) == x)})
 
     #folds <- cvFolds(n = nrow(train_data), K = k, R = 1)
     predictions <- data.frame()
@@ -52,7 +52,7 @@ do_cv <- function(train_data, current_model_constructor, params = list(), ..., k
         current_test_data <- train_data[test_index_list[[i]],]
 
         # learn model
-        current_model <- current_model_constructor(params)
+        current_model <- current_model_constructor()
         current_model$build(current_train_data, ...)
 
         # predict with the current model
