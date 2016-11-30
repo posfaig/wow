@@ -62,7 +62,7 @@ create_graph <- function(data, pred_date){
     # We also add a guild node with id -1 to represent how much time did avatars play outside of guilds recently.
 
     # Get the guild members at prediction date
-    guild_members <- data_with_cities %>% group_by(avatar) %>% slice(n()) %>% group_by() %>% filter(guild != -1)
+    guild_members <- data_with_cities %>% group_by(avatar) %>% dplyr::slice(n()) %>% group_by() %>% filter(guild != -1)
     avatar_date_guild_df <- data %>%
         select(avatar, current_date, guild) %>%
         group_by(avatar, current_date, guild) %>%
@@ -122,9 +122,9 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, graph
     personal_histories <- train_data %>%
         group_by(avatar, current_date, guild) %>%
         mutate(number_of_records = n()) %>%
-        slice(1) %>%
+        dplyr::slice(1) %>%
         group_by(avatar) %>%
-        slice(1:14) %>%
+        dplyr::slice(1:14) %>%
         group_by
 
     features <- personal_histories %>%

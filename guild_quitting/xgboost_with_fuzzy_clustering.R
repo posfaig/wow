@@ -12,7 +12,7 @@ get_model_xgboost_with_fclus <- function(params = list()){
     params <- list()
 
     preprocess <- function(data, is_train){
-        # filter not predictor columns
+        # remove not predictor columns
         data$avatar <- NULL
         data$guild <- NULL
         data$pred_date <- NULL
@@ -22,31 +22,12 @@ get_model_xgboost_with_fclus <- function(params = list()){
         # convert factors to numeric
         data <- convert_factors_to_numeric(data)
 
-        # scale data
         if (is_train){
-
-
+            # save names of final predictors
             params[["final_predictor_column_names"]] <<- names(data)
-            #tmp <- scale(data[,names(data)])
-            #data[,names(data)] <- tmp
-            #params[["scale_centers"]] <<- attr(tmp, "scaled:center")
-            #params[["scale_deviations"]] <<- attr(tmp, "scaled:scale")
-
-
-            # Set of final columns
-            params[["final_predictor_columns"]] <<- names(data)
-
         } else {
-
-            data <- data[, intersect(params$final_predictor_column_names, names(data))]
-
-            #data[,names(data)] <- scale(
-            #	data[,names(data)],
-            #	center=params$scale_centers,
-            #	scale=params$scale_deviations)
-
-            # Keep only the final columns of the training set
-            data <- data %>% select_(.dots = params[["final_predictor_columns"]])
+            # keep only predictors that were used during training
+            data <- data %>% select_(.dots = intersect(params$final_predictor_column_names, names(data)))
         }
 
         # If predictors were specified keep only those together with the cluster columns
@@ -64,8 +45,6 @@ get_model_xgboost_with_fclus <- function(params = list()){
     }
 
     build <- function(train_data) {
-        print(paste("Building model:", model_name))
-
         target_column <- "label"
         targets <- train_data[[target_column]]
         targets <- as.numeric(targets)  # numeric and >0 target variable as the frbs package requires
@@ -74,7 +53,6 @@ get_model_xgboost_with_fclus <- function(params = list()){
         train_data_preprocessed <- preprocess(train_data, TRUE)
 
         clust_mem_cols <- names(train_data_preprocessed)[startsWith(names(train_data_preprocessed), "Clus")]
-        print(paste("Number of clusters:", length(clust_mem_cols)))
         membership_threshold <- 1.0 / length(clust_mem_cols)
 
         sapply(clust_mem_cols, function(cluster_name){
@@ -97,8 +75,6 @@ get_model_xgboost_with_fclus <- function(params = list()){
     }
 
     predict_ <- function(test_data){
-        print("predicting...")
-
         test_data_preprocessed <- preprocess(test_data, FALSE)
 
         # Exclude cluster columns
@@ -143,7 +119,7 @@ do_cv_with_fuzzy_clustering <- function(train_data, current_model_constructor, n
 
     predictions <- data.frame()
     for (i in 1:length(train_index_list)){
-        # get train and test sets of current fold
+        # Get train and test sets of current fold
         current_train_data <- train_data[train_index_list[[i]],]
         current_test_data <- train_data[test_index_list[[i]],]
 

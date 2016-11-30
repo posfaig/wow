@@ -16,21 +16,18 @@ fuzzy_clustering_of_guilds <- function(dataset, num_clusters = 3, fuzziness = 2.
         "collaboration_3wise",
         "members_left",
          "new_members",
-         "largest_clique",
          "avg_daily_guild_activity",
          "avg_guild_member_activity",
          "avg_level_in_guild"
-
-
-
-        ##"max_cliques",
+        ## Other possible features:
+        #"largest_clique",
+        #"max_cliques",
         #"median_daily_guild_activity",
         #"median_guild_member_activity",
-        ##"active_members_ratio",
-        ##"median_level_in_guild",
-        ##"guild_created_recently",
-        ##"clustering_coeff"
-
+        #"active_members_ratio",
+        #"median_level_in_guild",
+        #"guild_created_recently",
+        #"clustering_coeff"
         #"collaboration_3wise",
         #"collaboration_5wise",
         #"collaboration_10wise",
@@ -42,15 +39,20 @@ fuzzy_clustering_of_guilds <- function(dataset, num_clusters = 3, fuzziness = 2.
 
     guild_features <- dataset %>%
         distinct(guild, pred_date) %>%
-        select_(.dots = c("guild", "pred_date", guild_feature_names))# %>%
-        #mutate(guild_created_recently = as.numeric(guild_created_recently))
+        select_(.dots = c("guild", "pred_date", guild_feature_names))
+
+    if ("guild_created_recently" %in% names(guild_features)){
+        guild_features <- guild_features %>%
+            mutate(guild_created_recently = as.numeric(guild_created_recently))
+    }
 
     set.seed(0)
     guild_clusters <- FKM(guild_features %>% mutate(guild = NULL, pred_date = NULL),
                           k = num_clusters,
                           m = fuzziness,
                           stand = 1,
-                          RS = 1)
+                          RS = 1,
+                          maxit = 100)
 
     guild_cluster_features <- as.data.frame(cbind(guild = guild_features$guild, guild_clusters$U)) %>% mutate(pred_date = guild_features$pred_date)
     dataset <- left_join(dataset, guild_cluster_features, by = c("guild", "pred_date"))

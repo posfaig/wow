@@ -8,6 +8,7 @@
 set.seed(0)
 
 library(readr)
+library(parallel)
 
 ##### MAIN #####
 
@@ -18,61 +19,82 @@ source("common/util.R")
 source("guild_quitting/xgboost_with_fuzzy_clustering.R")
 source("guild_quitting/fuzzy_clustering_of_guilds.R")
 
-### Get training dataset
-print("Get train dataset")
-train_data <- read_csv("guild_quitting/features_train.csv")
-train_data$race <- factor(train_data$race)
-train_data$charclass <- factor(train_data$charclass)
-train_data$guild_created_recently <- factor(train_data$guild_created_recently)
+# Get optimized parameters
+opt_params <- read_csv("generated/results/guild_quitting/xgboost/train_cv/opt_params.csv")
+time_window <- opt_params$value[opt_params$parameter == "time_window"]
 
 # Read selected features
 features_to_keep_df <- read_csv("generated/results/guild_quitting/xgboost/train_cv/selected_features.csv")
 features_to_keep <- features_to_keep_df$feature
 features_to_keep <- c(features_to_keep, "avatar", "guild", "label", "pred_date", "testset_end_date")
 
+### Get training dataset
+print("Get train dataset")
+train_data <- read_csv(paste("generated/tmp/guild_quitting/features_", time_window ,"-day_window_train.csv", sep = ""))
+train_data$race <- factor(train_data$race)
+train_data$charclass <- factor(train_data$charclass)
+train_data$guild_created_recently <- factor(train_data$guild_created_recently)
 
 
-#
-# ### Parameter tuning: fuzziness and number of fuzzy clusters
-# get_auc_for_parameter_setting <- function(num_clusters, fuzziness, dataset = train_data){
-#     print(paste("Number of clusters:", num_clusters))
-#     print(paste("Fuzziness:", fuzziness))
-#     dataset_with_fuzzy_clusters <- fuzzy_clustering_of_guilds(dataset, num_clusters, fuzziness)
-#     current_model_constructor <- get_model_xgboost_with_fclus
-#     predictions <- do_cv(dataset_with_fuzzy_clusters, current_model_constructor, k = k)
-#     results <- get_perf_measures(predictions$label, predictions$prediction)
-#     results$auc
-# }
-# auc_values_param_grid <- list()
-# best_auc <- 0
-# opt_num_clusters <- 0
-# get_auc_for_fuzziness_value <- function(fuzziness){
-#     auc_values_by_num_clusters <- sapply(2:10, get_auc_for_parameter_setting, fuzziness)
-#     if (max(auc_values_by_num_clusters) > best_auc){
-#         best_auc <<- max(auc_values_by_num_clusters)
-#         opt_num_clusters <<- which.max(auc_values_by_num_clusters) + 1
-#     }
-#     max(auc_values_by_num_clusters)
-# }
-# #fuzziness_opt_result <- optimize(get_auc_for_fuzziness_value, c(1.05, 5.0), maximum = TRUE, tol = 0.5)
-# #opt_fuzziness <- fuzziness_opt_result$maximum
-# fuzziness_values <- c(1.05, seq(1.5, 5.0, 0.5))
-# auc_values_by_fuzziness <- sapply(fuzziness_values, get_auc_for_fuzziness_value)
-# opt_fuzziness <- fuzziness_values[which.max(auc_values_by_fuzziness)]
-#
-#
-# print(paste("Optimal number of fuzzy clusters:", opt_num_clusters))
-# print(paste("Optimal fuzziness:", opt_fuzziness))
-# #print(paste("AUC at optimal parameter setting:", fuzziness_opt_result$objective))
-# write.table(data.frame(parameter = c("fuzziness", "num_clusters"), value = c(opt_fuzziness, opt_num_clusters)),
-#             "generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/opt_params.csv",
-#             append = FALSE, row.names = FALSE, col.names = TRUE, sep = ",", quote = FALSE)
-### torolni
-opt_num_clusters <- 5
-opt_fuzziness <- 2.5
-### torolni ---
+### Parameter tuning: fuzziness and number of fuzzy clusters
+get_auc_for_parameter_setting <- function(num_clusters, fuzziness, dataset = train_data){
+    print(paste("Number of clusters:", num_clusters))
+    print(paste("Fuzziness:", fuzziness))
+    current_model_constructor <- get_model_xgboost_with_fclus
+    predictions <- do_cv_with_fuzzy_clustering(dataset, current_model_constructor, num_clusters, fuzziness, features_to_keep, k = 2)
+    results <- get_perf_measures(predictions$label, predictions$prediction)
+    print(paste("AUC:", results$auc))
+    results$auc
+}
 
+# Evaluate parameter combinations
+num_clusters_values <- 2:20
+fuzziness_values <- c(1.05, seq(1.5, 8.0, 0.5))
+param_values <- expand.grid(fuzziness = fuzziness_values, num_clusters = num_clusters_values)
+file.remove("generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/params_tuning.csv")
+system.time(
+param_tuning_results <- apply(param_values, 1, function(params){
+    current_time <- system.time(
+        current_auc <- get_auc_for_parameter_setting(params['num_clusters'], params['fuzziness'])
+    )
+    current_results_df <- data.frame(
+        fuzziness = params['fuzziness'],
+        num_clusters = params['num_clusters'],
+        auc = current_auc,
+        time = current_time['elapsed'])
 
+    # Write the results of the current iteration of the parameter tuning process to disk
+    if (!file.exists("generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/params_tuning.csv")){
+        write.table(current_results_df,
+                    "generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/params_tuning.csv",
+                    append = FALSE, row.names = FALSE, col.names = TRUE, sep = ",", quote = FALSE)
+    } else {
+        write.table(current_results_df,
+                    "generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/params_tuning.csv",
+                    append = TRUE, row.names = FALSE, col.names = FALSE, sep = ",", quote = FALSE)
+    }
+    list(time = current_time['elapsed'], auc = current_auc)
+    })
+)
+param_values$auc <- sapply(param_tuning_results, function(x){x$auc})
+param_values$time <- sapply(param_tuning_results, function(x){x$time})
+
+# Ridge regression
+#param_values <- read.csv("generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/params_tuning.csv")
+lambda <- 1e-5
+param_values$objective_function <- param_values$auc -
+    lambda * rowSums(cbind(param_values$num_clusters ^ 2, param_values$fuzziness ^ 2))
+
+# Select the best parameter combination
+opt_fuzziness <- param_values[which.max(param_values$objective_function), "fuzziness"]
+opt_num_clusters <- param_values[which.max(param_values$objective_function), "num_clusters"]
+
+# Print and save results of parameter tuning
+print(paste("Optimal number of fuzzy clusters:", opt_num_clusters))
+print(paste("Optimal fuzziness:", opt_fuzziness))
+write.table(data.frame(parameter = c("fuzziness", "num_clusters"), value = c(opt_fuzziness, opt_num_clusters)),
+            "generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/opt_params.csv",
+            append = FALSE, row.names = FALSE, col.names = TRUE, sep = ",", quote = FALSE)
 
 ### Do rolling forecasting origin on training data
 print("Do rolling forecasting origin on training data")
@@ -91,29 +113,3 @@ write.table(data.frame(parameter = c("fuzziness", "num_clusters", "decision_thre
             "generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/opt_params.csv",
             append = FALSE, row.names = FALSE, col.names = TRUE, sep = ",", quote = FALSE)
 
-
-### Assess the impact of parameters
-# # Impact of number of fuzzy clusters
-# num_clusters_values <- 2:10
-# auc_values_by_number_of_clusters <- sapply(num_clusters_values, get_auc_for_parameter_setting, fuzziness = opt_fuzziness, dataset = train_data, k = 4)
-# auc_values_by_number_of_clusters_df <- data.frame(num_clusters = num_clusters_values, auc = auc_values_by_number_of_clusters)
-# write.table(auc_values_by_number_of_clusters_df,
-#             "generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/impact_of_num_clusters.csv",
-#             append = FALSE, row.names = FALSE, col.names = TRUE, sep = ",", quote = FALSE)
-#
-#
-# # Impact of fuzziness
-# fuzziness_values <- c(1.05, seq(1.5, 4.5, 0.5))
-# auc_values_by_fuzziness <- sapply(fuzziness_values, function(x, ...){
-#     get_auc_for_parameter_setting(fuzziness = x, ...)
-# }, num_clusters = opt_num_clusters, dataset = train_data, k = 4)
-# auc_values_by_fuzziness_df <- data.frame(fuzziness = fuzziness_values, auc = fuzziness_values)
-# write.table(auc_values_by_fuzziness_df,
-#             "generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/impact_of_fuzziness.csv",
-#             append = FALSE, row.names = FALSE, col.names = TRUE, sep = ",", quote = FALSE)
-#
-
-### Fuzzy-Clustering of Guilds
-# Fuzzy clustering on the whole training data
-#fuzzy_clusters <- fuzzy_clustering_of_guilds(train_data, opt_num_clusters, opt_fuzziness)
-#train_data_with_clusters <- fuzzy_clusters$data

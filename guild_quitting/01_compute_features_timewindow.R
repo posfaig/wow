@@ -3,12 +3,17 @@
 ### Compute Features
 ###
 #################################################################x
+
+if (!exists("time_window")){
+    time_window <- 10
+}
+print(paste("Current time window:", time_window))
+
 set.seed(0)
 
 library(dplyr)
 library(lubridate)
 library(data.table)
-library(randomForest)
 library(pROC)
 library(cvTools)
 library(readr)
@@ -26,17 +31,18 @@ library(igraph)
 # number of different guild the avatar had been member of
 # average/median daily activity in the last N days
 #	# hyperparameters:
-ind_daily_activity_last_days <- 3
+ind_daily_activity_last_days <- time_window
 
 
 ### Guild-related individual features:
 # activity as a guild member in the last N days
-gr_activity_as_member_last_days <- 3
+gr_activity_as_member_last_days <- time_window
 # how many days the avatar has been a member of its current guild for
 # collaboration time with guild members
 # number of friends in guild
 # number of tight friends in guild, tight means having at least M collaboration time (where collaboration time is the sum of the weights of edges)
-tight_friend_min_collab_time <- 6
+#tight_friend_min_collab_time <- 6
+tight_friend_quantile_boundary <- 0.5
 # number of friends already quit the guild
 # number of tight friends already quit the guild
 
@@ -44,21 +50,21 @@ tight_friend_min_collab_time <- 6
 ### Guild features:
 # number of guild members
 # number of (former) members who left the guild in the last N days
-g_guild_left_in_last_days <- 5
+g_guild_left_in_last_days <- time_window
 # number of new members who joined the guild in the last N days
-g_guild_joined_in_last_days <- 5
+g_guild_joined_in_last_days <- time_window
 # clustering coeff
 # average/median daily guild activity in the last N days
-g_guild_activity_last_days <- 5
+g_guild_activity_last_days <- time_window
 # average/median activity of members in the last N days
-g_guild_member_activity_last_days <- 5
+g_guild_member_activity_last_days <- time_window
 # percentage of members who had at least M activity in the last N days
-g_guild_members_ratio_with_activity_last_days <- 5
+g_guild_members_ratio_with_activity_last_days <- time_window
 g_guild_member_min_activity_thershold <- 1
 
 # average/median level of guild members
 # binary: guild was created in the last N days?
-g_guild_created_recently_days <- 7
+g_guild_created_recently_days <- time_window
 
 # percentage and number of the guild members of the same class as the class of the current avatar
 # Density: connections between guild members
@@ -66,7 +72,7 @@ g_guild_created_recently_days <- 7
 # Mass count: the number of sub-graphs larger than three in a guild's social network, that is, how many independent sub-units there are
 # average/median daily M-wise collaboration time in the last N days (time when at least M members were simultanously active in the guild in the same zone, times are summed for different zones, that is if the conditions are satisfied for multiple zones at the same time, we sum the collaboration time corresponding to each zone)
 # Average time spent in "instances" (dungeons): an indicator of the importance of planned group activities in a guild, as opposed to ad hoc quest parties and individual quests.
-g_time_in_dungeons_in_last_days <- 5
+g_time_in_dungeons_in_last_days <- time_window
 #
 #
 ##### Other possible features
@@ -92,7 +98,7 @@ if (!file.exists("guild_quitting/benchmark/number_interactions_by_days.csv")){
 ##### Helper functions
 
 ### Function to create intra-guild social networks
-source("guild_quitting/create_intraguild_sn.R")
+source("guild_quitting/create_intraguild_sn_timewindow.R")
 
 ### Compute features and labels for a given prediction date and test date based on the observed data and the current temporal social graph of avatars
 compute_features_and_labels <- function(data, pred_date, testset_end_date, intraguild_graphs){
@@ -131,7 +137,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
     # get the avatars that are member of a guild at prediction date
     current_guilds <- train_data %>%
         group_by(avatar) %>%
-        slice(n()) %>%
+        dplyr::slice(n()) %>%
         group_by() %>%
         filter(guild != -1) %>%
         select(avatar, guild) %>%
@@ -148,6 +154,8 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
             level = max(level),
             diff_guild_count = length(unique(guild[guild != -1])))
 
+    # add guild column to features
+    features <- add_feature(current_guilds %>% mutate(guild = current_guild, current_guild = NULL), "guild")
 
     ## Features: average/median daily activity in the last N days
     tmp <- train_data %>%
@@ -160,10 +168,8 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
     features <- add_feature(tmp, "med_daily_act")
 
 
-
     #### Guild-related individual features
     print("Guild-related individual features")
-
 
     ## Feature: activity as a guild member in the last N days
     tmp <- left_join(train_data, current_guilds) %>%
@@ -173,7 +179,6 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         group_by(avatar) %>%
         summarise(activity_as_member = n())
     features <- add_feature(tmp, "activity_as_member")
-
 
     ## Feature: how many days the avatar has been a member of its current guild for?
     tmp <- left_join(train_data, current_guilds) %>%
@@ -195,7 +200,6 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         mutate(days_since_first_guild_occurence = NULL, new_avatar = NULL)
     features <- add_feature(tmp, "member_for_days")
 
-
     ## Feature: collaboration time with guild members: sum of the weights of the avatar's edges in the intraguild social network
     edges_intra <- intraguild_graphs$edges_intra %>% filter(weight > 0)
     edges_intra$node_1 <- as.character(edges_intra$node_1)
@@ -216,7 +220,6 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         mutate(avatar = node_1, node_1 = NULL)
     features <- add_feature(tmp, "collaboration_with_members")
 
-
     ## Feature: number of friends in guild
     tmp <- edges_intra_bidirectional %>%
         group_by(node_1) %>%
@@ -224,15 +227,19 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         mutate(avatar = node_1, node_1 = NULL)
     features <- add_feature(tmp, "friends_in_guild")
 
+    # compute edge weight boundary for close friends based on the value of the close-friend-quantile parameter
+    positive_weights <- intraguild_graphs[['edges_intra_dash']]$weight
+    positive_weights <- positive_weights[positive_weights > 0]
+    tight_friend_weight_boundary <- quantile(positive_weights, tight_friend_quantile_boundary)
 
     ## Feature: number of tight friends in guild, tight means having at least M collaboration time
     tmp <- edges_intra_bidirectional %>%
-        filter(weight > tight_friend_min_collab_time) %>%
+        filter(weight > tight_friend_weight_boundary) %>%
         group_by(node_1) %>%
         summarise(tight_friends_in_guild = n()) %>%
         mutate(avatar = node_1, node_1 = NULL)
     features <- add_feature(tmp, "tight_friends_in_guild")
-
+    rm(edges_intra_bidirectional)
 
     ## Feature: number of friends already quit the guild
     edges_intra_former <- intraguild_graphs$edges_intra_former
@@ -247,29 +254,24 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
                                                   weight = edges_intra_former$weight,
                                                   guild = edges_intra_former$guild
                                               ))
+    rm(edges_intra_former)
 
     tmp <- edges_intra_former_bidirectional %>%
         group_by(node_1) %>%
-        summarise(friends_left_guild = n()) %>%
+        summarise(friends_left_guild = n(), guild = guild[1]) %>%
         mutate(avatar = node_1, node_1 = NULL)
-    features <- add_feature(tmp, "friends_left_guild")
-
+    features <- add_feature(tmp, "friends_left_guild", c("avatar", "guild"))
 
     ## Feature: number of tight friends already quit the guild
     tmp <- edges_intra_former_bidirectional %>%
-        filter(weight > tight_friend_min_collab_time) %>%
+        filter(weight > quantile(tight_friend_weight_boundary, tight_friend_quantile_boundary)) %>%
         group_by(node_1) %>%
-        summarise(tight_friends_left_guild = n()) %>%
+        summarise(tight_friends_left_guild = n(), guild = guild[1]) %>%
         mutate(avatar = node_1, node_1 = NULL)
-    features <- add_feature(tmp, "tight_friends_left_guild")
-
-
+    features <- add_feature(tmp, "tight_friends_left_guild", c("avatar", "guild"))
+    rm(edges_intra_former_bidirectional)
 
     #### Guild-related features
-
-    # add guild column to features
-    features <- add_feature(current_guilds %>% mutate(guild = current_guild, current_guild = NULL), "guild")
-
 
     ## Feature: number of guild members
     guild_members_df <- current_guilds %>%
@@ -277,7 +279,6 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         group_by(guild) %>%
         summarise(guild_members = n())
     features <- add_feature(guild_members_df, "guild_members", "guild")
-
 
     ## Feature: number of (former) members who left the guild in the last N days
     tmp <- train_data %>%
@@ -293,7 +294,6 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         summarise(members_left = n())  # count events
     features <- add_feature(tmp, "members_left", "guild")
 
-
     ## Feature: number of new members who joined the guild in the last N days
     tmp <- train_data %>%
         filter(event == "Guild Entered" | event == "Guild Changed") %>%
@@ -307,7 +307,6 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         summarise(new_members = n())  # count events
     features <- add_feature(tmp, "new_members", "guild")
 
-
     ## Feature: average/median daily guild activity in the last N days
     tmp <- train_data %>%
         filter(as.numeric(difftime(pred_date, current_date, units = "days")) <= g_guild_activity_last_days) %>%
@@ -318,7 +317,6 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
             median_daily_guild_activity = median(daily_guild_activity))
     features <- add_feature(tmp, "avg_daily_guild_activity", "guild")
     features <- add_feature(tmp, "median_daily_guild_activity", "guild")
-
 
     ## Feature: average/median activity of members in the last N days
     # we ignore the guild events (leaving joining) of the corresponding time period
@@ -331,7 +329,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
     tmp <- train_data %>%
         filter(guild != -1) %>%
         filter(as.numeric(difftime(pred_date, current_date, units = "days")) <= g_guild_member_activity_last_days) %>%
-        left_join(number_of_guild_members, by = "guild") %>%
+        inner_join(number_of_guild_members, by = "guild") %>%
         group_by(guild, avatar) %>%
         summarise(avatar_activity = n(), member_count = member_count[1]) %>%
         summarise(
@@ -343,7 +341,6 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
     features <- add_feature(tmp, "avg_guild_member_activity", "guild")
     features <- add_feature(tmp, "median_guild_member_activity", "guild")
 
-
     ## Feature: ratio of members who had at least M activity in the last N days
     tmp <- train_data %>%
         filter(guild != -1) %>%
@@ -354,12 +351,12 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         filter(avatar_activity >= g_guild_member_min_activity_thershold) %>%
         summarise(active_members_ratio = n() / member_count[1])
     features <- add_feature(tmp, "active_members_ratio", "guild")
-
+    rm(number_of_guild_members)
 
     ## Feature: average/median level of guild members
     current_guilds_with_levels <- train_data %>%
         group_by(avatar) %>%
-        slice(n()) %>%
+        dplyr::slice(n()) %>%
         group_by() %>%
         filter(guild != -1) %>%
         select(avatar, guild, level)
@@ -368,13 +365,13 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         summarise(avg_level_in_guild = mean(level), median_level_in_guild = median(level))
     features <- add_feature(tmp, "avg_level_in_guild", "guild")
     features <- add_feature(tmp, "median_level_in_guild", "guild")
-
+    rm(current_guilds_with_levels)
 
     ## Feature: binary: guild was created in the last N days?
     first_guilds <- train_data %>%
         filter(guild != -1) %>%
         group_by(avatar) %>%
-        slice(1) %>%
+        dplyr::slice(1) %>%
         group_by() %>%
         select(avatar, guild) %>%
         mutate(first_guild = guild, guild = NULL)
@@ -382,7 +379,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         filter(guild != -1) %>%
         left_join(first_guilds) %>%
         group_by(guild, avatar) %>%
-        slice(1) %>%
+        dplyr::slice(1) %>%
         group_by(guild) %>%
         summarise(
             new_guild = (sum(new_avatar | first_guild != guild[1]) == n()),
@@ -394,13 +391,13 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         filter(as.numeric(difftime(pred_date, guild_creation, units = "days")) <= g_guild_created_recently_days) %>%
         mutate(guild_created_recently = TRUE)
     features <- add_feature(tmp, "guild_created_recently", "guild", FALSE)
-
+    rm(first_guilds, guild_creations)
 
     ## Feature: ratio and number of the guild members of the same class as the class of the current avatar
     # when computing the ratio we exclude the currently examined avatar, so e.g. the ratio will 0 if the current avatar is the only member from its class
     current_guilds_with_class <- train_data %>%
         group_by(avatar) %>%
-        slice(n()) %>%
+        dplyr::slice(n()) %>%
         group_by() %>%
         filter(guild != -1) %>%
         select(avatar, guild, charclass)
@@ -410,26 +407,26 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
     features <- add_feature(guild_class_members, "members_of_same_class", c("guild", "charclass"), 0)
     features$members_of_same_class_ratio <- features$members_of_same_class / (features$guild_members - 1)
     features$members_of_same_class_ratio[is.na(features$members_of_same_class_ratio)] <- 0
-
+    rm(current_guilds_with_class)
 
     ## Feature: clustering coeff
     ## Feature: size of the largest clique in the guild's graph
     ## Feature: Mass count: the number of cliques larger than three in the guild's graph (~how many independent sub-units there are)
 
-    tmp <- edges_intra %>% group_by(guild) %>% do({
-        current_df <- .
-        guild_graph <- make_graph(as.vector(t(as.matrix(cbind(current_df$node_1, current_df$node_2)))))
-        clustering_coeff <- transitivity(guild_graph)
-        largest_clique <- clique_num(guild_graph)
-        max_cliques <- length(max_cliques(guild_graph, min = 3))
-        data.frame(clustering_coeff = clustering_coeff,
-                   largest_clique = largest_clique,
-                   max_cliques = max_cliques)
-    })
-    features <- add_feature(tmp, "clustering_coeff", "guild", 0)
-    features <- add_feature(tmp, "largest_clique", "guild", 1)
-    features <- add_feature(tmp, "max_cliques", "guild", 0)
-
+    # tmp <- edges_intra %>% group_by(guild) %>% do({
+    #     current_df <- .
+    #     guild_graph <- make_graph(as.vector(t(as.matrix(cbind(current_df$node_1, current_df$node_2)))))
+    #     clustering_coeff <- transitivity(guild_graph)
+    #     largest_clique <- clique_num(guild_graph)
+    #     max_cliques <- length(max_cliques(guild_graph, min = 3))
+    #     data.frame(clustering_coeff = clustering_coeff
+    #                largest_clique = largest_clique,
+    #                max_cliques = max_cliques
+    #                )
+    # })
+    # features <- add_feature(tmp, "clustering_coeff", "guild", 0)
+    # features <- add_feature(tmp, "largest_clique", "guild", 1)
+    # features <- add_feature(tmp, "max_cliques", "guild", 0)
 
     ## Feature: Density: percentage of matrix cells that are filled in, in adjacency matrix of the guild's graph
     tmp <- guild_members_df %>%
@@ -438,7 +435,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         mutate(density = edges / (guild_members * (guild_members - 1) / 2)) %>%
         mutate(density = ifelse(is.na(density), 0, density))
     features <- add_feature(tmp, "density", "guild", 0)
-
+    rm(guild_members_df, edges_intra)
 
     ## Feature: average/median daily M-wise collaboration time in the last N days (time when at least M members were simultanously active in the guild in the same zone, times are summed for different zones, that is if the conditions are satisfied for multiple zones at the same time, we sum the collaboration time corresponding to each zone)
     g_mwise_collaboration <- c(3, 5, 10, 20, 40)
@@ -467,7 +464,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         tmp$mwise_collab <- NULL
         features <- add_feature(tmp, feature_name, "guild", 0)
     }
-
+    rm(guild_activities_by_snapshots)
 
     ## Feature: time spent in "instances" (dungeons) by guild members in the last N days
     ## Feature: average time spent in "instances" (dungeons) by guild members in the last N days
@@ -481,7 +478,6 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         summarise(dungeon_activity = n())
     features <- add_feature(tmp, "dungeon_activity", "guild", 0)
     features$avg_dungeon_activity <- features$dungeon_activity / features$guild_members
-
 
     ##### Joining labels
     print("Joining features and labels")
@@ -515,24 +511,20 @@ print("Get train and test datasets")
 training_data <- get_features_for_pred_dates(
     prediction_dates_train,
     create_intraguild_graphs,
-    compute_features_and_labels)
+    compute_features_and_labels,
+    time_window = time_window)
 # Write results to files
-write_csv(training_data, "guild_quitting/features_train.csv")
+write_csv(training_data, paste("generated/tmp/guild_quitting/features_", time_window ,"-day_window_train.csv", sep = ""))
 rm(training_data)
 
 test_data <- get_features_for_pred_dates(
     prediction_dates_test,
     create_intraguild_graphs,
-    compute_features_and_labels)
+    compute_features_and_labels,
+    time_window = time_window)
 # Write results to files
-write_csv(test_data, "guild_quitting/features_test.csv")
+write_csv(test_data, paste("generated/tmp/guild_quitting/features_", time_window ,"-day_window_test.csv", sep = ""))
 rm(test_data)
 
-###################
-# TEST
-#pred_date <- "2008-06-01"
-#data <- wow
-#rm(wow)
-#testset_end_date <- as.Date(pred_date) + 30
-#intraguild_graphs <- create_intraguild_graphs(data, pred_date)
+rm(interactions, wow)
 

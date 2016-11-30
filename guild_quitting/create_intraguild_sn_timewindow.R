@@ -5,14 +5,15 @@
 ##########################################################################
 
 ### Create the social graph for a given prediction date based on the observed data
-create_intraguild_graphs <- function(data, pred_date){
+create_intraguild_graphs <- function(data, pred_date, time_window){
+
     pred_date <- as.Date(pred_date)
     # keep only the events before the current prediction date
     data <- data %>% filter(current_date < pred_date)
 
     current_guilds <- data %>%
         group_by(avatar) %>%
-        slice(n()) %>%
+        dplyr::slice(n()) %>%
         group_by() %>%
         filter(guild != -1) %>%
         select(avatar, guild)
@@ -53,17 +54,18 @@ create_intraguild_graphs <- function(data, pred_date){
 
     ### Function for computing the weights of edges
     # This function only considers collaborations in the last M days, and simply counts the cooccurence snapshots
-    compute_weight_component <- function(interaction_dates, cooccurence_snapshot_count = 1, M = 5){
+    compute_weight_component <- function(interaction_dates, cooccurence_snapshot_count = 1, M = time_window){
         sum(cooccurence_snapshot_count[
             as.numeric(difftime(pred_date, interaction_dates, units = "days")) <= M
             ])
     }
     print("Getting all edges")
     tmp <- interactions %>%
-        filter(current_date < pred_date) %>%
+        filter(current_date < pred_date & difftime(pred_date, current_date, units = "days") <= time_window) %>%
         group_by(avatar.x, avatar.y) %>%
         summarise(current_weight = compute_weight_component(current_date, collaboration)) %>%
-        group_by
+        group_by %>%
+        filter(current_weight > 0)
     edges <- data.frame(node_1 = as.character(tmp$avatar.x), node_2 = as.character(tmp$avatar.y), weight = tmp$current_weight)
 
     print("Getting edges of graph_intra")
@@ -88,8 +90,6 @@ create_intraguild_graphs <- function(data, pred_date){
 
     # edges within guilds between both current and former members
     print("Getting edges of graph_intra_dash")
-    print("Class edges_with_current_guilds$node_1")
-    print(class(edges_with_current_guilds$node_1))
     edges_intra_dash <- nodes_dash %>%
         group_by(guild) %>%
         do({
@@ -102,7 +102,7 @@ create_intraguild_graphs <- function(data, pred_date){
         })
 
     # edges within guilds between members of which at least one is a former member
-    # ~ (edges_intra - edges_intra_dash)
+    # ~ (edges_intra_dash - edges_intra)
     edges_intra_former <- rbind(edges_intra, edges_intra_dash) %>%
         group_by(node_1, node_2, guild) %>%
         mutate(n = n()) %>%
@@ -120,7 +120,7 @@ create_intraguild_graphs <- function(data, pred_date){
     # edges: collaborations between avatars
     # edges_intra: edges within guilds, between current members
     # edges_intra_dash: edges within guilds between both current and former members
-    # edges_intra_former: edges_intra - edges_intra_dash
+    # edges_intra_former: edges_intra_dash - edges_intra
     list(nodes = nodes,
          nodes_dash = nodes_dash,
          nodes_former = nodes_former,

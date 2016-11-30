@@ -4,27 +4,33 @@
 ###
 ##############################################################################################################
 
-
+library(parallel)
 library(cvTools)
 
 
 # Compute features and labels for a set of prediction dates
-get_features_for_pred_dates <- function(pred_dates, graph_creating_function, feature_computing_function){
+get_features_for_pred_dates <- function(pred_dates, graph_creating_function, feature_computing_function, ...){
     dataset <- data.frame()
-    for (pred_date in pred_dates){
+
+    datasets_list <- lapply(pred_dates, function(pred_date){
         print(paste("Computing features and labels for prediction date", pred_date))
         testset_end_date <- as.Date(pred_date) + 30
 
-        graph_data <- graph_creating_function(wow, pred_date)
+        graph_data <- graph_creating_function(wow, pred_date, ...)
         data_subset <- feature_computing_function(wow, pred_date, testset_end_date, graph_data)
+        data_subset
+    })
 
-        # concat
+    # concat result datasets
+    lapply(datasets_list, function(data_subset){
         if (nrow(dataset) == 0){
-            dataset <- data_subset
+            dataset <<- data_subset
         } else {
-            dataset <- rbind(dataset, data_subset)
+            dataset <<- rbind(dataset, data_subset)
         }
-    }
+        c()
+    })
+
     dataset
 }
 
@@ -37,17 +43,9 @@ do_cv <- function(train_data, current_model_constructor, ..., k = 8){
     train_index_list <- lapply(min_date_index:length(sort(unique(train_data$pred_date))), function(x){which(as.numeric(factor(train_data$pred_date)) < x)})
     test_index_list <- lapply(min_date_index:length(sort(unique(train_data$pred_date))), function(x){which(as.numeric(factor(train_data$pred_date)) == x)})
 
-    #folds <- cvFolds(n = nrow(train_data), K = k, R = 1)
     predictions <- data.frame()
     for (i in 1:length(train_index_list)){
-    #for (i in 1:k){
-        # get indecies of current fold
-        #test_set_row_indecies <- folds$subsets[folds$which == i, 1]
-        #training_set_row_indecies <- folds$subsets[folds$which != i, 1]
-
-        # get train and test sets of current fold
-        #current_train_data <- train_data[training_set_row_indecies,]
-        #current_test_data <- train_data[test_set_row_indecies,]
+    	# get train and test sets for current iteration
         current_train_data <- train_data[train_index_list[[i]],]
         current_test_data <- train_data[test_index_list[[i]],]
 

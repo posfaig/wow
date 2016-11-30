@@ -108,7 +108,7 @@ min_date <- min(wow$current.date)
 max_date <- max(wow$current.date)
 
 # Auxiliary data frame variable
-guild_members <- wow %>% group_by(avatar) %>% slice(1) %>% group_by() %>% filter(current.date==min_date | !new_avatar)
+guild_members <- wow %>% group_by(avatar) %>% dplyr::slice(1) %>% group_by() %>% filter(current.date==min_date | !new_avatar)
 
 time_step <- 60*24 # minutes
 snap_times <- seq(as.POSIXlt(as.Date("2008-01-02")), as.POSIXlt(as.Date("2009-01-01")), time_step*60)
@@ -171,7 +171,7 @@ system.time(
         if (!is.null(new_records) && nrow(new_records)>0){
             # keeping only the last record of each avatar in the current time interval
             guild_members <- rbind(guild_members, new_records)
-            guild_members <- guild_members %>% group_by(avatar) %>% slice(n()) %>% group_by()
+            guild_members <- guild_members %>% group_by(avatar) %>% dplyr::slice(n()) %>% group_by()
         }
         #print(paste(row_index, nrow(wow), sep="/"))
 
@@ -558,7 +558,7 @@ wow <- wow %>%
 
 newGuilds <- wow %>%
     group_by(guild, avatar) %>%
-    slice(1) %>%
+    dplyr::slice(1) %>%
     group_by(guild) %>%
     summarise(new_guild = (sum(new_avatar | !this.is.first.guild) == length(new_avatar)))
 summary(newGuilds$new_guild)
