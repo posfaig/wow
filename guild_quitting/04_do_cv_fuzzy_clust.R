@@ -85,6 +85,11 @@ lambda <- 1e-5
 param_values$objective_function <- param_values$auc -
     lambda * rowSums(cbind(param_values$num_clusters ^ 2, param_values$fuzziness ^ 2))
 
+# Write parameter tuning results to file
+write.table(param_values,
+            "generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/params_tuning.csv",
+            append = FALSE, row.names = FALSE, col.names = TRUE, sep = ",", quote = FALSE)
+
 # Select the best parameter combination
 opt_fuzziness <- param_values[which.max(param_values$objective_function), "fuzziness"]
 opt_num_clusters <- param_values[which.max(param_values$objective_function), "num_clusters"]
@@ -107,6 +112,7 @@ opt_threshold_fuzzy_clust <- optimize(fscore_for_decision_threshold, c(0, 1.0), 
 print(paste("Decision threshold at optimal F-score:", opt_threshold_fuzzy_clust))
 results <- get_perf_measures(predictions$label, predictions$prediction, opt_threshold_fuzzy_clust$maximum)
 results
+
 write_results_to_file(predictions, results, paste("guild_quitting/", (get_model_xgboost_with_fclus())$model_name(), "/train_cv", sep = ""))
 
 write.table(data.frame(parameter = c("fuzziness", "num_clusters", "decision_threshold"), value = c(opt_fuzziness, opt_num_clusters, opt_threshold_fuzzy_clust$maximum)),

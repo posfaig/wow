@@ -35,7 +35,7 @@ ind_daily_activity_last_days <- time_window
 
 
 ### Guild-related individual features:
-# activity as a guild member in the last N days
+# average daily activity as a guild member in the last N days
 gr_activity_as_member_last_days <- time_window
 # how many days the avatar has been a member of its current guild for
 # collaboration time with guild members
@@ -171,13 +171,13 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
     #### Guild-related individual features
     print("Guild-related individual features")
 
-    ## Feature: activity as a guild member in the last N days
+    ## Feature: average daily activity as a guild member in the last N days
     tmp <- left_join(train_data, current_guilds) %>%
         filter(avatar %in% current_guilds$avatar) %>%
         filter(as.numeric(difftime(pred_date, current_date, units = "days")) <= gr_activity_as_member_last_days) %>%
         filter(guild == current_guild) %>%
         group_by(avatar) %>%
-        summarise(activity_as_member = n())
+        summarise(activity_as_member = n() / gr_activity_as_member_last_days)
     features <- add_feature(tmp, "activity_as_member")
 
     ## Feature: how many days the avatar has been a member of its current guild for?
@@ -438,8 +438,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
     rm(guild_members_df, edges_intra)
 
     ## Feature: average/median daily M-wise collaboration time in the last N days (time when at least M members were simultanously active in the guild in the same zone, times are summed for different zones, that is if the conditions are satisfied for multiple zones at the same time, we sum the collaboration time corresponding to each zone)
-    g_mwise_collaboration <- c(3, 5, 10, 20, 40)
-    g_mwise_collaboration_in_last_days <- c(10, 10, 10, 10, 10)
+    g_mwise_collaboration <- c(10, 20, 25)  # There are 10-, 20- and 25-player raids in this WoW release
 
     # create a variable identifying the snapshots
     snap_times <- seq(as.POSIXlt(as.Date("2008-01-01")), as.POSIXlt(as.Date("2009-01-01")), 10 * 60)
@@ -457,7 +456,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
     for (i in (1:length(g_mwise_collaboration))) {
         feature_name <- paste("collaboration_", g_mwise_collaboration[i], "wise", sep = "")
         tmp <- guild_activities_by_snapshots %>%
-            filter(as.numeric(difftime(pred_date, current_date, units = "days")) <= g_mwise_collaboration_in_last_days[i]) %>%
+            filter(as.numeric(difftime(pred_date, current_date, units = "days")) <= time_window) %>%
             group_by(guild) %>%
             summarise(mwise_collab = sum(activity >= g_mwise_collaboration[i]))
         tmp[[feature_name]] <- tmp$mwise_collab

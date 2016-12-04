@@ -12,9 +12,12 @@ source("common/streamline_functions_for_modeling.R")
 source("common/model_evaluation.R")
 source("common/util.R")
 
-### Get training dataset
-print("Get train dataset")
-train_data <- read_csv("guild_quitting/features_train.csv")
+# Get optimized parameters
+opt_params <- read_csv("generated/results/guild_quitting/xgboost/train_cv/opt_params.csv")
+time_window <- opt_params$value[opt_params$parameter == "time_window"]
+
+### Get train dataset
+train_data <- read_csv(paste("generated/tmp/guild_quitting/features_", time_window ,"-day_window_train.csv", sep = ""))
 train_data$race <- factor(train_data$race)
 train_data$charclass <- factor(train_data$charclass)
 train_data$guild_created_recently <- factor(train_data$guild_created_recently)
@@ -83,7 +86,7 @@ featurePlot(x = train_data[, c("guild_members",
                                "avg_guild_member_activity",
                                "median_guild_member_activity",
                                "avg_daily_guild_activity",
-                               "collaboration_3wise",
+                               "collaboration_10wise",
                                "avatar_guild_lvl_diff",
                                "members_left",
                                "new_members",
@@ -97,15 +100,46 @@ featurePlot(x = train_data[, c("guild_members",
             layout = c(6, 2),
             auto.key = list())
 
-featurePlot(x = train_data[, c("collaboration_3wise",
-                               "collaboration_5wise",
-                               "collaboration_10wise",
+featurePlot(x = train_data[, c("collaboration_10wise",
                                "collaboration_20wise",
-                               "collaboration_40wise")],
+                               "collaboration_25wise")],
             y = factor(train_data$label),
             plot = "box",
             ## Pass in options to bwplot()
             scales = list(y = list(relation="free"),
                           x = list(rot = 90)),
-            layout = c(5, 1),
+            layout = c(3, 1),
             auto.key = list())
+
+
+fuzzy_clustering_columns <- c("density",
+                              "guild_members",
+                              "members_left",
+                              "avg_daily_guild_activity",
+                              "avg_guild_member_activity",
+                              "avg_level_in_guild")
+
+# Box plots
+featurePlot(x = train_data[, fuzzy_clustering_columns],
+            y = factor(train_data$label),
+            plot = "box",
+            ## Pass in options to bwplot()
+            scales = list(y = list(relation="free"),
+                          x = list(rot = 90)),
+            layout = c(length(fuzzy_clustering_columns), 1),
+            auto.key = list())
+
+# t-tests
+t_test_results <- lapply(fuzzy_clustering_columns, function(col_name){
+    t.test((train_data[[col_name]])[train_data$label], (train_data[[col_name]])[!train_data$label])
+
+})
+lapply(t_test_results, function(x){x$p.value})
+
+# ks-tests
+ks_test_results <- lapply(fuzzy_clustering_columns, function(col_name){
+    ks.test((train_data[[col_name]])[train_data$label], (train_data[[col_name]])[!train_data$label])
+
+})
+lapply(ks_test_results, function(x){x$p.value})
+

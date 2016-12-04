@@ -30,11 +30,9 @@ kmeans_clustering_of_guilds <- function(dataset, num_clusters = 4, remove_guild_
         "guild_created_recently",
         "clustering_coeff")#,
     #"density",
-    #"collaboration_3wise",
-    #"collaboration_5wise",
     #"collaboration_10wise",
     #"collaboration_20wise",
-    #"collaboration_40wise",
+    #"collaboration_25wise",
     #"dungeon_activity",
     #"avg_dungeon_activity")
 

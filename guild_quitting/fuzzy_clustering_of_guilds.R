@@ -8,18 +8,18 @@ library(dplyr)
 library(fclust)
 
 fuzzy_clustering_of_guilds <- function(dataset, num_clusters = 3, fuzziness = 2.5, remove_guild_cols = FALSE){
-    print("Custers:")
-    print(num_clusters)
     guild_feature_names <- c(
         "density",
         "guild_members",
-        "collaboration_3wise",
         "members_left",
-         "new_members",
-         "avg_daily_guild_activity",
-         "avg_guild_member_activity",
-         "avg_level_in_guild"
-        ## Other possible features:
+        "avg_daily_guild_activity",
+        "avg_guild_member_activity",
+        "avg_level_in_guild"
+
+
+        ## Other possible features (did not improve AUC):
+        #"collaboration_10wise",
+        #"new_members",
         #"largest_clique",
         #"max_cliques",
         #"median_daily_guild_activity",
@@ -28,11 +28,9 @@ fuzzy_clustering_of_guilds <- function(dataset, num_clusters = 3, fuzziness = 2.
         #"median_level_in_guild",
         #"guild_created_recently",
         #"clustering_coeff"
-        #"collaboration_3wise",
-        #"collaboration_5wise",
         #"collaboration_10wise",
         #"collaboration_20wise",
-        #"collaboration_40wise",
+        #"collaboration_25wise",
         #"dungeon_activity",
         #"avg_dungeon_activity"
     )
