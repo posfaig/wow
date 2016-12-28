@@ -1,7 +1,9 @@
 ##########################################################################
 ###
-### Build XGBoost Model with Fuzzy Clustering
-### and Perform Cross Validation on the Training Dataset
+### XGBoost Model with Fuzzy C-Means
+###
+### Train and evaluate models on the training dataset
+### Tune fuzzy clustering parameters and decision threshold value
 ###
 ##########################################################################
 
@@ -16,7 +18,7 @@ library(parallel)
 source("common/streamline_functions_for_modeling.R")
 source("common/model_evaluation.R")
 source("common/util.R")
-source("guild_quitting/xgboost_with_fuzzy_clustering.R")
+source("guild_quitting/model_xgb_fcm.R")
 source("guild_quitting/fuzzy_clustering_of_guilds.R")
 
 # Get optimized parameters

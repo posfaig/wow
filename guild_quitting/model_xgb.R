@@ -1,8 +1,8 @@
-######################################################
+#######################################################
 ###
-### Functio for Building and Evaluating XGBoost Model
+### Function for building and evaluating xgboost models
 ###
-######################################################
+#######################################################
 
 library(dplyr)
 library(xgboost)

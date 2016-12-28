@@ -9,7 +9,7 @@
 ##### MAIN #####
 
 # Helper funcitons
-source("guild_quitting/models.R")
+source("guild_quitting/model_xgb.R")
 source("common/streamline_functions_for_modeling.R")
 source("common/model_evaluation.R")
 source("common/util.R")

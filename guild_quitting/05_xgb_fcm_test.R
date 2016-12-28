@@ -9,7 +9,7 @@
 ##### MAIN #####
 source("common/model_evaluation.R")
 source("common/util.R")
-source("guild_quitting/xgboost_with_fuzzy_clustering.R")
+source("guild_quitting/model_xgb_fcm.R")
 source("guild_quitting/fuzzy_clustering_of_guilds.R")
 
 # Get optimized parameter values

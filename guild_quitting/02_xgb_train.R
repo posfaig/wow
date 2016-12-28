@@ -1,7 +1,9 @@
 ##########################################################################
 ###
-### Build XGBoost Model
-### and Perform Cross Validation on the Training Dataset
+### Simple XGBoost Model
+###
+### Train and evaluate XGBoost model on the training dataset with rolling forecasting origin resampling
+### Tune the time window parameter and the decision threshold value
 ###
 ##########################################################################
 
@@ -13,7 +15,7 @@ library(parallel)
 ##### MAIN #####
 
 ### Helper funcitons
-source("guild_quitting/models.R")
+source("guild_quitting/model_xgb.R")
 source("common/streamline_functions_for_modeling.R")
 source("common/model_evaluation.R")
 source("common/util.R")
