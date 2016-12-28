@@ -5,7 +5,7 @@ MAINTAINER Gergely Pósfai "posfaig@gmail.com"
 RUN R -e "install.packages(c('lubridate', 'data.table', 'dummies', 'pROC', 'cvTools', 'randomForest', 'igraph', 'scales', 'xgboost', 'RColorBrewer'), repos='https://cran.rstudio.com/')"
 
 # Create directories and get codes
-RUN mkdir -p git/wow; git clone https://github.com/posfaig/wow/paper_201701_conf git/wow
+RUN mkdir -p git/wow; git clone -b paper_201701_conf https://github.com/posfaig/wow git/wow
 
 # Copy datasets to the docker image
 COPY data/ git/wow/data/
