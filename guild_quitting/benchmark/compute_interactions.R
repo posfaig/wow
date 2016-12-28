@@ -16,7 +16,7 @@ library(randomForest)
 library(pROC)
 library(cvTools)
 
-data_dir <- "../../data/raw/"
+data_dir <- "data/raw/"
 
 wow <- tbl_df(fread(paste(data_dir, "wowah_data.csv", sep = "")))
 names(wow) <- trimws(names(wow))

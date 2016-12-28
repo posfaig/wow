@@ -9,7 +9,7 @@ library(dplyr)
 library(lubridate)
 library(data.table)
 
-data_dir <- "../../data/raw/"
+data_dir <- "data/raw/"
 interactions <- read_csv("guild_quitting/benchmark/number_interactions_by_days.csv")
 wow <- tbl_df(fread(paste(data_dir, "wowah_data.csv", sep = "")))
 names(wow) <- trimws(names(wow))

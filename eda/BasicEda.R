@@ -1,7 +1,7 @@
 ### EDA Focusing on Guilds
 
 set.seed(0)
-data_dir <- "../../data/raw/"
+data_dir <- "data/raw/"
 
 library(lubridate)
 library(stringr)
