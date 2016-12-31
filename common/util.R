@@ -19,7 +19,7 @@ convert_factors_to_numeric <- function(dataset) {
 }
 
 
-save_plot <- function(ggplot_plot, dir_name, file_name, width = 10, height = 8, ...){
+save_plot <- function(ggplot_plot, dir_name, file_name, width = 10, height = 7, ...){
     output_path <- paste("generated/plots/", dir_name, "/", sep = "")
     dir.create(file.path("./", "generated/"), showWarnings = FALSE)
     dir.create(file.path("generated/", "plots/"), showWarnings = FALSE)
