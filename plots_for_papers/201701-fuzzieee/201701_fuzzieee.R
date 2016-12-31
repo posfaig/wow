@@ -172,7 +172,7 @@ time_window_plot <- ggplot(time_window_values, aes(x = time_window, y = round(au
     ylim(0.7975, .8115) + xlim(0,16)
 
 time_window_plot
-save_plot(time_window_plot, output_dir_name, "time_window_plot", width = 13, height = 8)
+save_plot(time_window_plot, output_dir_name, "time_window_plot", width = 10, height = 6)
 
 ### Impact of Fuzzy Clustering Parameters
 
