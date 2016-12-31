@@ -21,12 +21,12 @@ get_palette <- function(palette_name, n = 4){
 
 get_theme <- function(){
     theme_bw() +
-    theme(axis.text=element_text(size=25),
-          axis.title=element_text(size=30),
+    theme(axis.text=element_text(size=24),
+          axis.title=element_text(size=24),
           axis.title.x=element_text(vjust=-1.5),
           axis.title.y=element_text(vjust=2.0),
-          legend.text = element_text(size = 25),
-          legend.title = element_text(size = 25))
+          legend.text = element_text(size = 24),
+          legend.title = element_text(size = 24))
 }
 
 # ### ROC, AUC
