@@ -5,8 +5,10 @@
 ###
 ########################################################################################################
 
+print("Compute interactions (collaborations) between players")
 set.seed(0)
-output_file <- "guild_quitting/benchmark/number_interactions_by_days.csv"
+output_file <- "generated/tmp/benchmark/number_interactions_by_days.csv"
+dir.create(file.path("generated/tmp/benchmark/"), showWarnings = FALSE, recursive = TRUE)
 
 # Init, import data
 library(dplyr)

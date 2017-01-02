@@ -7,6 +7,8 @@
 ### Create the social graph for a given prediction date based on the observed data
 create_intraguild_graphs <- function(data, pred_date, time_window){
 
+    library(dplyr)
+
     pred_date <- as.Date(pred_date)
     # keep only the events before the current prediction date
     data <- data %>% filter(current_date < pred_date)
@@ -103,7 +105,8 @@ create_intraguild_graphs <- function(data, pred_date, time_window){
 
     # edges within guilds between members of which at least one is a former member
     # ~ (edges_intra_dash - edges_intra)
-    edges_intra_former <- rbind(edges_intra, edges_intra_dash) %>%
+    print("Getting auxiliary variable edges_intra_former")
+    edges_intra_former <- as.data.frame(rbind(edges_intra, edges_intra_dash)) %>%
         group_by(node_1, node_2, guild) %>%
         mutate(n = n()) %>%
         group_by() %>%
@@ -121,6 +124,7 @@ create_intraguild_graphs <- function(data, pred_date, time_window){
     # edges_intra: edges within guilds, between current members
     # edges_intra_dash: edges within guilds between both current and former members
     # edges_intra_former: edges_intra_dash - edges_intra
+    print("create_intraguild_graphs --- return")
     list(nodes = nodes,
          nodes_dash = nodes_dash,
          nodes_former = nodes_former,

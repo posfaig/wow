@@ -90,8 +90,7 @@ g_time_in_dungeons_in_last_days <- time_window
 
 
 ##### Compute interactions (collaborations) between avatars
-# Takes ~5 hours on my machine
-if (!file.exists("guild_quitting/benchmark/number_interactions_by_days.csv")){
+if (!file.exists("generated/tmp/benchmark/number_interactions_by_days.csv")){
     source("guild_quitting/benchmark/compute_interactions.R")
 }
 
@@ -102,6 +101,7 @@ source("guild_quitting/create_intraguild_sn_timewindow.R")
 
 ### Compute features and labels for a given prediction date and test date based on the observed data and the current temporal social graph of avatars
 compute_features_and_labels <- function(data, pred_date, testset_end_date, intraguild_graphs){
+    print("compute_features_and_labels --- start")
     pred_date <- as.Date(pred_date)
     testset_end_date <- as.Date(testset_end_date)
 
