@@ -39,14 +39,14 @@ create_intraguild_graphs <- function(data, pred_date, time_window){
     nodes_dash <- data %>%
         filter(guild != -1) %>%
         select(avatar, guild) %>%
-        distinct(avatar, guild)
+        distinct(avatar, guild, .keep_all = TRUE)
     nodes_former <- rbind(nodes, nodes_dash) %>%
         group_by(avatar, guild) %>%
         mutate(n = n()) %>%
         group_by() %>%
         filter(n < 2) %>%
         mutate(n = NULL) %>%
-        distinct(avatar, guild)
+        distinct(avatar, guild, .keep_all = TRUE)
 
 
     ##### EDGES
@@ -69,6 +69,7 @@ create_intraguild_graphs <- function(data, pred_date, time_window){
         group_by %>%
         filter(current_weight > 0)
     edges <- data.frame(node_1 = as.character(tmp$avatar.x), node_2 = as.character(tmp$avatar.y), weight = tmp$current_weight)
+    edges <- edges %>% mutate(node_1 = as.character(node_1), node_2 = as.character(node_2))
 
     print("Getting edges of graph_intra")
     edges_with_current_guilds <- edges
@@ -101,18 +102,19 @@ create_intraguild_graphs <- function(data, pred_date, time_window){
                 mutate(guild = current_guild_node_1) %>%
                 select(node_1, node_2, weight, guild)
             tmp
-        })
+        }) %>%
+        group_by()
 
     # edges within guilds between members of which at least one is a former member
     # ~ (edges_intra_dash - edges_intra)
     print("Getting auxiliary variable edges_intra_former")
-    edges_intra_former <- as.data.frame(rbind(edges_intra, edges_intra_dash)) %>%
+    edges_intra_former <- rbind(edges_intra, edges_intra_dash) %>%
         group_by(node_1, node_2, guild) %>%
         mutate(n = n()) %>%
         group_by() %>%
         filter(n < 2) %>%
         mutate(n = NULL) %>%
-        distinct(node_1, node_2, guild)
+        distinct(node_1, node_2, guild, .keep_all = TRUE)
 
 
     ##### RETURN

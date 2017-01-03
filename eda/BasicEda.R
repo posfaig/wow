@@ -45,8 +45,8 @@ wow <- wow %>% group_by(avatar) %>% mutate(new_avatar=(min(level)==1 | (min(leve
 wow %>% filter(guild >= 0) %>% summarise(n_distinct(guild))
 
 # Number of avatars who were member of at least one guild
-c(unique(wow %>% filter(guild>=0) %>% distinct(avatar) %>% summarise(in_guild=n())),
-    length(unique(wow$avatar)) - unique(wow %>% filter(guild>=0) %>% distinct(avatar) %>% summarise(no_guild=n())))
+c(unique(wow %>% filter(guild>=0) %>% distinct(avatar, .keep_all = TRUE) %>% summarise(in_guild=n())),
+    length(unique(wow$avatar)) - unique(wow %>% filter(guild>=0) %>% distinct(avatar, .keep_all = TRUE) %>% summarise(no_guild=n())))
 
 # Percentage of avatars who were a member of a guild at least once by levels
 # Ezt szebbre, meg meggyozodni h jol mukodik-e
@@ -277,7 +277,7 @@ guilds_over_time_plot + geom_line(aes(y = sd_level, group=guild, color=guild))
 guilds_over_time_plot + geom_line(aes(y = min_level, group=guild, color=guild))
 guilds_over_time_plot + geom_line(aes(y = max_level, group=guild, color=guild))
 
-who_left <- wow %>% filter(prev_guild==guild_id & guild!=guild_id) %>% select(avatar) %>% distinct(avatar)
+who_left <- wow %>% filter(prev_guild==guild_id & guild!=guild_id) %>% select(avatar) %>% distinct(avatar, .keep_all = TRUE)
 wow %>%
     filter(avatar %in% who_left$avatar) %>%
     select(avatar, guild, prev_guild, timestamp) %>%
@@ -737,7 +737,7 @@ ggplot() +
     theme_bw() +
     labs(title = "Histogram of the Maximal Number of Guild Members for each Guild", x="Maximal Number of Members", y="Percentage of Guilds")
 #summary(tmp$max_number_of_members[tmp$guild != -1])
-wow %>% filter(guild != -1 & number_of_members > 500) %>% distinct(guild) %>% select(guild, number_of_members)
+wow %>% filter(guild != -1 & number_of_members > 500) %>% distinct(guild, .keep_all = TRUE) %>% select(guild, number_of_members)
 #big_guilds
 #rm(tmp)
 

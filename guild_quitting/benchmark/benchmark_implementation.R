@@ -85,7 +85,7 @@ create_graph <- function(data, pred_date){
 
     # nodes: avatars and guilds
     print("Create nodes")
-    avatar_nodes <- data %>% distinct(avatar) %>% select(avatar) %>% collect %>% .[["avatar"]]
+    avatar_nodes <- data %>% distinct(avatar, .keep_all = TRUE) %>% select(avatar) %>% collect %>% .[["avatar"]]
     guild_nodes <- unique(c(data$guild, guild_members$guild))
     nodes <- c(avatar_nodes, guild_nodes)
 
@@ -309,7 +309,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, graph
     exguilds <- train_data %>%
         filter(event == "Guild Changed" | event == "Guild Left") %>%
         select(avatar, prev_guild) %>%
-        distinct(avatar, prev_guild)
+        distinct(avatar, prev_guild, .keep_all = TRUE)
     exguilds$guild <- as.numeric(exguilds$prev_guild)
     exguilds$prev_guild <- NULL
     # remove exguilds if an avatar rejoined its older guild and currently is still a member of it

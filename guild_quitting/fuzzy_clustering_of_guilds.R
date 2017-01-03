@@ -36,7 +36,7 @@ fuzzy_clustering_of_guilds <- function(dataset, num_clusters = 3, fuzziness = 2.
     )
 
     guild_features <- dataset %>%
-        distinct(guild, pred_date) %>%
+        distinct(guild, pred_date, .keep_all = TRUE) %>%
         select_(.dots = c("guild", "pred_date", guild_feature_names))
 
     if ("guild_created_recently" %in% names(guild_features)){

@@ -285,7 +285,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         filter(event == "Guild Left" | event == "Guild Changed") %>%
         filter(as.numeric(difftime(pred_date, current_date, units = "days")) <= g_guild_left_in_last_days) %>%
         select(avatar, prev_guild) %>%  # get events when members left
-        distinct(avatar, prev_guild) %>%  # only count one event per member per guild
+        distinct(avatar, prev_guild, .keep_all = TRUE) %>%  # only count one event per member per guild
         mutate(guild = prev_guild, prev_guild = NULL) %>%
         left_join(current_guilds %>% mutate(guild = current_guild), by = c("guild", "avatar")) %>%
         filter(is.na(current_guild)) %>%  # filter out events where the avatar rejoined	the guild later
@@ -299,7 +299,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
         filter(event == "Guild Entered" | event == "Guild Changed") %>%
         filter(as.numeric(difftime(pred_date, current_date, units = "days")) <= g_guild_joined_in_last_days) %>%
         select(avatar, guild) %>%  # get events when members left
-        distinct(avatar, guild)  # only count one event per member per guild
+        distinct(avatar, guild, .keep_all = TRUE)  # only count one event per member per guild
     # keep only the events where the avatar is still a member of the joined guild
     tmp <- inner_join(current_guilds %>% mutate(guild = current_guild), tmp, by = c("guild", "avatar")) %>%
         mutate(current_guild = NULL) %>%
