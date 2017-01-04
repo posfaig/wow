@@ -487,6 +487,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
     features_and_labels
 
     ##### RETURN
+    print("compute_features_and_labels --- return")
     features_and_labels
 }
 
@@ -513,6 +514,8 @@ training_data <- get_features_for_pred_dates(
     compute_features_and_labels,
     time_window = time_window)
 # Write results to files
+dir.create(file.path("generated/tmp/guild_quitting/"), showWarnings = FALSE, recursive = TRUE)
+print("Write training data features to file")
 write_csv(training_data, paste("generated/tmp/guild_quitting/features_", time_window ,"-day_window_train.csv", sep = ""))
 rm(training_data)
 
@@ -522,6 +525,7 @@ test_data <- get_features_for_pred_dates(
     compute_features_and_labels,
     time_window = time_window)
 # Write results to files
+print("Write test data features to file")
 write_csv(test_data, paste("generated/tmp/guild_quitting/features_", time_window ,"-day_window_test.csv", sep = ""))
 rm(test_data)
 

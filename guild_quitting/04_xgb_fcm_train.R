@@ -8,6 +8,8 @@
 ##########################################################################
 
 set.seed(0)
+dir.create(file.path("generated/results/guild_quitting/xgboost_with_fuzzy_clustering/train_cv/"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path("generated/results/guild_quitting/xgboost_with_fuzzy_clustering/test/"), showWarnings = FALSE, recursive = TRUE)
 
 library(readr)
 library(parallel)

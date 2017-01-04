@@ -8,6 +8,8 @@
 ##########################################################################
 
 set.seed(0)
+dir.create(file.path("generated/results/guild_quitting/xgboost/train_cv/"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path("generated/results/guild_quitting/xgboost/test/"), showWarnings = FALSE, recursive = TRUE)
 
 library(readr)
 library(parallel)
@@ -37,9 +39,10 @@ evaluate_time_window <- function(time_window){
     train_data$charclass <- factor(train_data$charclass)
     train_data$guild_created_recently <- factor(train_data$guild_created_recently)
 
-    ### Create model on the whole training set and extract feature importances
+    ### Create model on the records of the first prediction date and extract feature importances
+    train_data_first_iteration <- train_data[train_data$pred_date == min(train_data$pred_date),]
     xgboost_wrapper <- get_model_xgboost()
-    invisible(xgboost_wrapper$build(train_data))
+    invisible(xgboost_wrapper$build(train_data_first_iteration))
     features_by_importance <- xgb.importance(feature_names = (xgboost_wrapper$params())$final_predictor_column_names, model = xgboost_wrapper$model())
     feature_names_ordered <- features_by_importance$Feature
 

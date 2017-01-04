@@ -13,7 +13,9 @@
 sapply(1:15, function(x){
          time_window <<- x
          print(paste("Time window:", time_window))
-         print(system.time(source("guild_quitting/01_compute_features_timewindow.R")))
+         if (!file.exists(paste("generated/tmp/guild_quitting/features_", time_window ,"-day_window_train.csv", sep = ""))){
+            print(system.time(source("guild_quitting/01_compute_features_timewindow.R")))
+         }
     })
 
 ### Simple XGBoost model on the training data
