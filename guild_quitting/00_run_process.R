@@ -4,6 +4,12 @@
 ###
 ##########################################################################
 
+### Get the general statistics of the dataset
+print(system.time(source("common/general_dataset_stats.R")))
+
+### Evaluate benchmark method on the dataset
+print(system.time(source("guild_quitting/benchmark/benchmark_implementation.R")))
+
 ### Compute features for various time windows
 # library(parallel)
 # mclapply(1:15, function(x){

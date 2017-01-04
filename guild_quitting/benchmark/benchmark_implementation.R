@@ -6,9 +6,10 @@
 
 set.seed(0)
 
-##### Compute collaborations between player #####
-# Takes ~5 hours on my machine
-#source("guild_quitting/benchmark/compute_interactions.R")
+##### Compute collaborations between players #####
+if (!file.exists("generated/tmp/benchmark/number_interactions_by_days.csv")){
+    source("guild_quitting/benchmark/compute_interactions.R")
+}
 
 ##### Parameters #####
 
