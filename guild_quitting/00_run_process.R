@@ -19,7 +19,8 @@ print(system.time(source("guild_quitting/benchmark/benchmark_implementation.R"))
 sapply(1:15, function(x){
          time_window <<- x
          print(paste("Time window:", time_window))
-         if (!file.exists(paste("generated/tmp/guild_quitting/features_", time_window ,"-day_window_train.csv", sep = ""))){
+         if (!file.exists(paste0("generated/tmp/guild_quitting/features_", time_window ,"-day_window_train.csv"))
+             || !file.exists(paste0("generated/tmp/guild_quitting/features_", time_window ,"-day_window_test.csv"))){
             print(system.time(source("guild_quitting/01_compute_features_timewindow.R")))
          }
     })

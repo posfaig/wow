@@ -2,7 +2,7 @@ FROM rocker/tidyverse:3.3.2
 MAINTAINER Gergely Pósfai "posfaig@gmail.com"
 
 # Install additional packages
-RUN R -e "install.packages(c('lubridate', 'data.table', 'dummies', 'pROC', 'cvTools', 'randomForest', 'igraph', 'scales', 'xgboost', 'RColorBrewer'), repos='https://cran.rstudio.com/')"
+RUN R -e "install.packages(c('lubridate', 'data.table', 'dummies', 'pROC', 'cvTools', 'randomForest', 'igraph', 'scales', 'xgboost', 'RColorBrewer', 'fclust'), repos='https://cran.rstudio.com/')"
 
 # Create directories and get codes
 RUN mkdir -p git/wow; git clone -b paper_201701_conf https://github.com/posfaig/wow git/wow

@@ -4,6 +4,8 @@
 ###
 ##########################################################################
 
+library(dplyr)
+library(xgboost)
 
 get_model_xgboost_with_fclus <- function(params = list()){
     model_name <- "xgboost_with_fuzzy_clustering"

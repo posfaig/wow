@@ -8,7 +8,7 @@ output_dir_name <- "201701_fuzzieee"
 library(dplyr)
 library(readr)
 library(ggplot2)
-library(plotROC)
+#library(plotROC)
 library(pROC)
 library(RColorBrewer)
 
