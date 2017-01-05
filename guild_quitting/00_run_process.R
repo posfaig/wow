@@ -40,6 +40,6 @@ print(system.time(source("guild_quitting/04_xgb_fcm_train.R")))
 print(system.time(source("guild_quitting/05_xgb_fcm_test.R")))
 
 ### Create plots for paper
-print(system.time(source("plots_for_papers/201701-fuzzieee/201701_fuzzieee.R")))
+print(system.time(source("plots_for_papers/201701-conf/plots.R")))
 
 

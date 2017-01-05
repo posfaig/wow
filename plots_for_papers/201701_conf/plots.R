@@ -1,10 +1,10 @@
 ##########################################################################
 ###
-### Creating the plots for manuscript to be submitted to Fuzz-ieee 2017
+### Creating the plots for manuscript
 ###
 ##########################################################################
 
-output_dir_name <- "201701_fuzzieee"
+output_dir_name <- "201701_conf"
 library(dplyr)
 library(readr)
 library(ggplot2)
