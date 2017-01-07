@@ -264,7 +264,7 @@ compute_features_and_labels <- function(data, pred_date, testset_end_date, intra
 
     ## Feature: number of tight friends already quit the guild
     tmp <- edges_intra_former_bidirectional %>%
-        filter(weight > quantile(tight_friend_weight_boundary, tight_friend_quantile_boundary)) %>%
+        filter(weight > tight_friend_weight_boundary) %>%
         group_by(node_1) %>%
         summarise(tight_friends_left_guild = n(), guild = guild[1]) %>%
         mutate(avatar = node_1, node_1 = NULL)
