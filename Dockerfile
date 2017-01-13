@@ -1,15 +1,14 @@
-FROM rocker/tidyverse:3.3.2 
+FROM rocker/tidyverse:3.3.2
 MAINTAINER Gergely Pósfai "posfaig@gmail.com"
 
 # Install additional packages
 RUN R -e "install.packages(c('lubridate', 'data.table', 'dummies', 'pROC', 'cvTools', 'randomForest', 'igraph', 'scales', 'xgboost', 'RColorBrewer', 'fclust'), repos='https://cran.rstudio.com/')"
 
 # Create directories and get codes
-RUN mkdir -p git/wow; git clone -b paper_201701_conf https://github.com/posfaig/wow git/wow
+RUN mkdir -p git/wow; git clone https://github.com/posfaig/wow git/wow
 
 # Copy datasets to the docker image
 COPY data/ git/wow/data/
 
 # Execute computations
 CMD cd git/wow && Rscript guild_quitting/00_run_process.R
-
