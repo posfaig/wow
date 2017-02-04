@@ -70,7 +70,8 @@ get_model_xgboost_with_fclus <- function(params = list()){
             models[[cluster_name]] <<- xgb.train(list(),
                              data = dat,
                              nrounds = 100,
-                             objective = "binary:logistic")
+                             objective = "binary:logistic",
+                             eval_metric = "auc")
         })
 
         models
