@@ -1,0 +1,691 @@
+---
+title: "Guild Entering Events EDA"
+author: "Gergely Pósfai"
+date: "February 18, 2017"
+output: 
+    html_document:
+        toc: true
+        highlight: zenburn
+
+---
+
+<script>
+window.onload = function () {
+    var listElements = document.getElementsByTagName("li");
+    for(i = 0;i < listElements.length; i++) {
+        if (listElements[i].innerText == ""){
+            listElements[i].style.display = "none";
+        }
+    }
+}
+</script>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, fig.width = 9, fig.height = 5, cache = TRUE, cache.lazy = FALSE)
+knitr::opts_knit$set(root.dir = '/mnt/cucc/bme/phd/kutatas/wow/git/wow')
+```
+
+# Introduction
+
+This is an introductory exploratory analysis focusing on the problem of guild entering event prediction (i.e. events when avatars join guilds).
+
+## Initialization
+
+Setting some basic parameters, loading packages and functions, reading data:
+
+```{r}
+avatar_graph_time_window <- 30
+prediction_time_window <- 7
+
+library(dplyr)
+library(lubridate)
+library(data.table)
+library(pROC)
+library(cvTools)
+library(readr)
+library(igraph)
+library(tidyr)
+library(igraph)
+library(ggplot2)
+library(cowplot)
+library(data.table)
+
+source("common/init.R")
+source("guild_quitting/create_intraguild_sn_timewindow.R")
+
+prediction_dates_train <- as.character(seq(as.Date("2008-02-01"), as.Date("2008-10-25"), 7))
+prediction_dates_test <- as.character(seq(as.Date("2008-11-01"), as.Date("2008-12-25"), 7))
+
+set.seed(0)
+
+### Add zone type column
+zones <- read_csv(paste(data_dir, "zones.csv", sep = ""))
+wow <- left_join(wow, zones %>%
+                     select(Type, Zone_Name) %>%
+                     mutate(zone_type = Type, zone = Zone_Name, Type = NULL, Zone_Name = NULL),
+                 by = "zone")
+rm(zones)
+```
+
+# Structured Training Dataset
+
+We transform the original data to create a strutured dataset containing samples that can be used for guild event prediction. Each sample corresponds to a *prediction date-avatar* pair, and the target variable indicates which guild was joined by the avatar within the prediction time window after the current prediction date.
+
+```{r}
+compute_features_and_labels_pred_date <- function(data, pred_date){
+    print("compute_features_and_labels --- start")
+    pred_date <- as.Date(pred_date)
+    testset_end_date <- pred_date + prediction_time_window
+
+    # Keep only the data regarding known avatars
+    #avatars_in_guilds <- intraguild_graphs$nodes
+    #data <- data %>% filter(avatar %in% avatars_in_guilds$avatar)
+    min_date <- min(data$current_date)
+
+    ##### Compute labels for avatars
+    test_data <- data %>% filter(current_date >= pred_date & current_date < testset_end_date)
+    labels <- test_data %>%
+        filter(event == "Guild Entered" | event == "Guild Changed") %>%
+        group_by(avatar) %>%
+        slice(1) %>%
+        group_by() %>%
+        select(avatar, current_date, guild, event, prev_guild)
+
+
+    train_data <- data %>% filter(current_date < pred_date)
+
+    # get the avatars that are not guild members on the prediction date
+    # out_of_guild_avatars <- train_data %>%
+    #     group_by(avatar) %>%
+    #     dplyr::slice(n()) %>%
+    #     group_by() %>%
+    #     filter(guild == -1) %>%  # ezt kiszedni?
+    #     select(avatar, guild)
+
+
+    ## Features: char, race, level, number of different guild the avatar had been member of
+    features <- train_data %>%
+        #filter(avatar %in% out_of_guild_avatars$avatar) %>%  # ezt kiszedni?
+        group_by(avatar) %>%
+        summarise(
+            race = race[1],
+            charclass = charclass[1],
+            level = max(level),
+            diff_guild_count = length(unique(guild[guild != -1])))
+
+    ### ...
+    ### Compute various features here...
+    ### ...
+
+    ##### Joining labels
+    print("Joining features and labels")
+    features_and_labels <- left_join(features, labels, by = "avatar")
+    features_and_labels$pred_date <- pred_date
+    features_and_labels$testset_end_date <- testset_end_date
+    features_and_labels
+
+    features_and_labels <- features_and_labels #%>% filter(!is.na(guild))
+    features_and_labels <- features_and_labels %>% mutate(known_label = ifelse(
+        !is.na(guild) & guild %in% unique(train_data$guild), TRUE, FALSE))
+
+    ##### RETURN
+    print("compute_features_and_labels --- return")
+    features_and_labels
+}
+
+compute_features_and_labels <- function(pred_dates){
+    dataset <- data.frame()
+
+    datasets_list <- lapply(pred_dates, function(pred_date){
+        print(paste("Computing features and labels for prediction date", pred_date))
+        data_subset <- compute_features_and_labels_pred_date(wow, pred_date)
+        data_subset
+    })
+    datasets_list
+
+    #concat result datasets
+    lapply(datasets_list, function(data_subset){
+        if (nrow(dataset) == 0){
+            dataset <<- data_subset
+        } else {
+            dataset <<- rbind(dataset, data_subset)
+        }
+        c()
+    })
+    dataset
+}
+
+invisible(data_train <- compute_features_and_labels(prediction_dates_train))
+
+# number of all samples
+nrow(data_train)
+# training data
+glimpse(data_train)
+```
+
+# Number of Samples
+
+Total number of samples:
+
+```{r}
+data_train %>% summarise(samples_all = n(),
+                         samples_with_labels = sum(!is.na(guild)),
+                         samples_with_known_labels = sum(known_label))
+```
+
+Number of samples by guilds:
+
+```{r}
+data_train %>% group_by(guild) %>%
+    summarise(n = n()) %>%
+    ggplot(aes(x = guild)) + geom_bar(aes(y = n), stat = 'identity') + 
+    theme_bw() +
+    labs(x = "Guild ID", y = "Number of Samples")
+```
+
+Number of samples by prediction date and label type:
+
+```{r}
+data_train %>%
+    group_by(pred_date) %>%
+    summarise(samples_all = n(),
+              samples_with_labels = sum(!is.na(guild)),
+              samples_with_known_labels = sum(known_label)) %>%
+    gather(type, num_samples, -pred_date) %>%
+    mutate(type = factor(type, levels = c("samples_all", "samples_with_labels", "samples_with_known_labels"))) %>%
+    ggplot(aes(x = pred_date, y = num_samples)) +
+        geom_bar(aes(fill = type),
+                 stat = 'identity',
+                 position = 'dodge') +
+        geom_text(aes(color = type, label = num_samples),
+                  position = position_dodge(width = 30),
+                  angle = 45, vjust = -0.6, hjust = 0.15) +
+    theme_bw() +
+    labs(x = "Prediction Date", y = "Number of Samples")
+```
+
+# Percentage of Samples Belonging to Top Guilds
+
+Percentage of samples belonging to guilds with the most samples:
+
+```{r}
+# percentage of samples corresponding to the top guildy by the number of top guilds
+plot_samplepercent_of_top_guilds <- function(data){
+    data <- data %>% filter(!is.na(guild))
+    samples_by_guilds <- data %>% group_by(guild) %>%
+        summarise(n = n()) %>% arrange(desc(n))
+
+    samples_by_top_guilds_df <- data.frame(number_of_top_guilds = 1:nrow(samples_by_guilds)) %>%
+        mutate(percent_of_samples =
+                   sapply(1:max(number_of_top_guilds), function(x){sum(samples_by_guilds$n[1:x])})
+               / nrow(data) * 100)
+
+    samples_by_top_guilds_df %>%
+        ggplot(aes(x = number_of_top_guilds, y = percent_of_samples)) +
+        geom_line(color = "steelblue") + theme_bw() +
+        labs(x = "Number of Top Guilds Owning the Most Samples", y = "Percent of Comprised Samples",
+             title = paste(min(data$pred_date), max(data$pred_date), sep = "-"))
+}
+plot_samplepercent_of_top_guilds(data_train)
+```
+
+```{r}
+selected_pred_dates <- sort(sample(unique(as.character(data_train$pred_date)), 8))
+plots <- lapply(selected_pred_dates, function(current_pred_date){
+    plot_samplepercent_of_top_guilds(data_train %>% filter(as.character(pred_date) == current_pred_date))
+})
+plot_grid(plots[[1]], plots[[2]], plots[[3]], plots[[4]], plots[[5]], plots[[6]], plots[[7]], plots[[8]], nrow = 2)
+```
+
+```{r}
+# number of labeled samples of top guilds by time
+top_guilds_by_time <- data_train %>%
+    filter(!is.na(guild)) %>%
+    group_by(guild) %>%
+    mutate(samples_of_guild = n()) %>% group_by %>%
+    filter(samples_of_guild > 25) %>%  # consider only the guilds that have at least N samples
+    group_by(pred_date, guild) %>%
+    summarise(number_of_samples = n()) %>%
+    arrange(pred_date, desc(number_of_samples)) %>%
+    mutate(guild = factor(guild))
+head(top_guilds_by_time, 100)
+```
+
+## Autocorrelation of Number of Samples of Guilds
+
+Check if there is any correlation between the number of samples for subsequent prediction dates for individual guilds. We only show guilds that have at least a certain number of samples.
+
+```{r}
+ggplot(top_guilds_by_time, aes(x = pred_date, y = number_of_samples, group = guild, color = guild)) +
+    geom_line() +
+    theme_bw() + labs(
+        x = "Prediction Date",
+        y = "Number of Samples",
+        title = "Number of Samples with Labels by Prediction Date and Guild")
+```
+
+The same thing on a heatmap:
+
+```{r}
+ggplot(top_guilds_by_time, aes(x = pred_date, y = guild)) +
+    geom_tile(aes(fill = number_of_samples), color = "white") +
+    theme_bw() +
+    labs(x = 'Prediction Date', 
+         y = 'Guild ID', 
+         title = "Number of Samples with Labels by Prediction Date and Guild") +
+    #scale_fill_distiller(palette = "Spectral")
+    scale_fill_gradient(low = "#ececec", high = "#000251") +
+    geom_text(aes(label = number_of_samples), color = 'orange', size = 2.2)
+```
+
+The average autocorrelation of the number of samples on the subsequent prediction dates of individual guilds (the average autocorrelations for the rows of the heatmap):
+
+```{r}
+acf_values <- top_guilds_by_time %>% group_by(guild) %>% do({
+    tmp <- acf(.$number_of_samples, plot = FALSE)
+    result <- as.data.frame(matrix(tmp$acf, nrow = 1))
+    names(result) <- paste0("lag", 0:(length(tmp$acf) - 1))
+    result
+})
+acf_values$guild <- 0
+colMeans(acf_values, na.rm = T)
+```
+
+# Creating the Network of Avatars
+
+Few helper functions to compute the size of guilds and to construct the network of avatars on a specific prediction date:
+
+```{r}
+# get guild sizes for prediction dates
+get_guild_sizes_for_pred_date <- function(pred_date){
+    guild_sizes <- wow %>%
+        filter(current_date < as.Date(pred_date)) %>%
+        group_by(avatar) %>%
+        slice(n()) %>%
+        group_by(guild) %>%
+        summarise(size = n()) %>%
+        left_join(wow %>%
+                      filter(current_date < as.Date(pred_date)) %>%
+                      filter(current_date >= as.Date(pred_date) - avatar_graph_time_window) %>%
+                      group_by(avatar) %>%
+                      slice(n()) %>%
+                      group_by(guild) %>%
+                      summarise(effective_size = n())) %>%
+        mutate(effective_size = ifelse(is.na(effective_size), 0, effective_size),
+               pred_date = pred_date)
+}
+guild_sizes_by_pred_date_list <- lapply(prediction_dates_train, get_guild_sizes_for_pred_date)
+guild_sizes_by_pred_date <- rbindlist(guild_sizes_by_pred_date_list)
+
+# get the avatar network for a given prediction date
+get_extended_graph_data <- function(current_pred_date){
+    graph_data <- create_intraguild_graphs(wow,
+                                           current_pred_date,
+                                           time_window = avatar_graph_time_window)
+
+    vertices_df <- wow %>%
+        filter(current_date < as.Date(current_pred_date)) %>%
+        filter(current_date >= as.Date(current_pred_date) - avatar_graph_time_window) %>%
+        group_by(avatar) %>%
+        slice(n()) %>% group_by() %>%
+        select(avatar, guild) %>%
+        left_join(data_train %>%
+                      filter(pred_date == current_pred_date) %>%
+                      select(avatar, label_guild = guild))
+
+    edges_symetric <- rbind(graph_data$edges, data.frame(
+        node_1 = graph_data$edges$node_2,
+        node_2 = graph_data$edges$node_1,
+        weight = graph_data$edges$weight
+    ))
+    # adding guilds to graph nodes
+    edges_symetric <- edges_symetric %>%
+        left_join(vertices_df %>% mutate(node_1 = avatar) %>% select(node_1, guild)) %>%
+        mutate(node_1_guild = guild, guild = NULL) %>%
+        left_join(vertices_df %>% mutate(node_2 = avatar) %>% select(node_2, guild)) %>%
+        mutate(node_2_guild = guild, guild = NULL)
+
+    list(graph_data = graph_data,
+         vertices_df = vertices_df,
+         edges_symetric = edges_symetric,
+         pred_date = current_pred_date)
+}
+```
+
+Construct the network of avatars for each prediction date:
+
+```{r avatar_network_construction, results = "hide"}
+avatar_network_list <- sapply(prediction_dates_train, function(current_pred_date){
+    get_extended_graph_data(current_pred_date)
+}, USE.NAMES = TRUE, simplify = FALSE)
+edges_symetric_all <- rbindlist(lapply(avatar_network_list, function(x){
+    tmp <- x$edges_symetric
+    tmp$pred_date <- x$pred_date
+    tmp
+    }))
+vertices_df_all <- rbindlist(lapply(avatar_network_list, function(x){
+    tmp <- x$vertices_df
+    tmp$pred_date <- x$pred_date
+    tmp
+}))
+```
+
+# Connectedness Between Avatars and Guilds
+
+```{r}
+get_conn_between_avatars_and_guilds <- function(current_pred_date, avatar_network){
+    guild_sizes_on_pred_date <- get_guild_sizes_for_pred_date(current_pred_date)
+    tmp <- avatar_network$edges_symetric %>% mutate(avatar = node_1) %>%
+        filter(node_2_guild != -1) %>%
+        mutate(guild = node_2_guild) %>%
+        left_join(guild_sizes_on_pred_date) %>%
+        mutate(guild = NULL) %>%
+        left_join(avatar_network$vertices_df) %>% group_by(avatar) %>%
+        summarise(degree_to_target_guild = sum(weight[node_2_guild == label_guild]),
+                  degree_ratio_to_target_guild = degree_to_target_guild / size[node_2_guild == label_guild][1])
+
+    tmp2 <- avatar_network$edges_symetric %>% mutate(avatar = node_1) %>%
+        filter(node_2_guild != -1) %>%
+        mutate(guild = node_2_guild) %>%
+        left_join(guild_sizes_on_pred_date) %>%
+        mutate(guild = NULL) %>%
+        group_by(avatar, node_2_guild) %>%
+        summarise(degree_to_guild = sum(weight), size = size[1]) %>%
+        summarise(degree_to_guild_max = max(degree_to_guild),
+                  degree_to_guild_max_guild = node_2_guild[which.max(degree_to_guild)],
+                  degree_ratio_to_guild_max = max(degree_to_guild/size),
+                  degree_ratio_to_guild_max_guild = node_2_guild[which.max(degree_to_guild/size)])
+
+    node_degrees <- avatar_network$vertices_df %>%
+        filter(!is.na(label_guild)) %>%
+        left_join(avatar_network$edges_symetric %>% mutate(avatar = node_1) %>% group_by(avatar) %>%
+                      summarise(degree_all = sum(weight))) %>%
+        left_join(tmp) %>%
+        left_join(tmp2) %>%
+        mutate(joined_max = (label_guild == degree_to_guild_max_guild)) %>%
+        left_join(guild_sizes_on_pred_date %>% 
+                      mutate(label_guild = guild, label_guild_size = size) %>%
+                      select(label_guild, label_guild_size, pred_date)) %>%
+        mutate(joined_max_ratio = (label_guild == degree_ratio_to_guild_max_guild))
+
+    node_degrees$pred_date <- current_pred_date
+    node_degrees
+}
+print(class(prediction_dates_train))
+node_degrees_list <- lapply(prediction_dates_train, function(current_pred_date){
+    get_conn_between_avatars_and_guilds(current_pred_date, avatar_network_list[[current_pred_date]])
+})
+node_degrees <- rbindlist(node_degrees_list)
+```
+
+How many samples contain an avatar who joined its most connected guild:
+
+1. If connectedness towards a guild is measured by the sum of individual connections to the members of the guild:
+
+```{r}
+summary(node_degrees$joined_max)
+```
+
+2. If connectedness towards a guild is measured as the average of the connections towards the members of the guild:
+
+```{r}
+summary(node_degrees$joined_max_ratio)
+```
+
+### Can all these be simply explained by the size of guilds? ###
+
+#### What to look at?
+
+Largest guilds =?= Most prevalent guilds among the target guilds where joined_max or joined_max_ratio is TRUE
+
+```{r}
+# largest guilds (most members)
+guild_sizes_by_pred_date %>%
+    filter(guild != -1) %>%
+    select(pred_date, guild, size) %>%
+    group_by(pred_date) %>%
+    slice(1:min(nrow(.), 5)) %>%
+    group_by() %>%
+    arrange(pred_date, desc(size))
+# guilds with most samples
+node_degrees %>%
+    group_by(pred_date, label_guild) %>%
+    summarise(size = label_guild_size[1], samples = n()) %>%
+    slice(1:min(nrow(.), 5)) %>%
+    arrange(pred_date, desc(samples))
+# guilds with the most samples where the avatar joined the most connected guild (sum of connections)
+node_degrees %>%
+    filter(joined_max) %>%
+    group_by(pred_date, label_guild) %>%
+    summarise(size = label_guild_size[1], samples = n()) %>%
+    slice(1:min(nrow(.), 5)) %>%
+    arrange(pred_date, desc(samples))
+# guilds with the most samples where the avatar joined the most connected guild (mean connectedness)
+node_degrees %>%
+    filter(joined_max_ratio) %>%
+    group_by(pred_date, label_guild) %>%
+    summarise(size = label_guild_size[1], samples = n()) %>%
+    slice(1:min(nrow(.), 5)) %>%
+    arrange(pred_date, desc(samples))
+```
+
+Difference in the degree of connectedness between avatars who had joined their most connected guild and avatars who hadn't:
+
+```{r}
+summary(node_degrees$degree_to_guild_max[!is.na(node_degrees$degree_to_guild_max) & node_degrees$joined_max])
+summary(node_degrees$degree_to_guild_max[!is.na(node_degrees$degree_to_guild_max) & !node_degrees$joined_max])
+ggplot(node_degrees, aes(x = degree_to_guild_max)) +
+    geom_density(aes(fill = joined_max, color = joined_max), alpha = 0.2) + 
+    theme_bw() +
+    labs(x = "Maximal Connectedness to a Guild",
+         y = "Density",
+         title = "Distribution of the Maximal Guild Connectednesses of Avatars",
+         subtitle = "Two Groups: Whether Avatars Joined Their Most Connected Guild or Not")
+```
+
+## Distribution of Guild Connectednesses for Target and Non-Target Guilds
+
+```{r}
+get_aggregated_avatar_guild_connections <- function(current_pred_date, avatar_network){
+    connectedness_to_guilds <- avatar_network$edges_symetric %>% mutate(avatar = node_1) %>%
+        filter(node_2_guild != -1) %>%
+        mutate(guild = node_2_guild) %>%
+        left_join(guild_sizes_by_pred_date %>%
+                  filter(pred_date == current_pred_date)) %>%
+        mutate(guild = NULL) %>%
+        group_by(avatar, node_2_guild) %>%
+        summarise(degree_to_guild = sum(weight),
+                  size = size[1],
+                  effective_size = effective_size[1],
+                  mean_degree = degree_to_guild / size,
+                  effective_mean_degree = degree_to_guild / effective_size) %>%
+        mutate(guild = node_2_guild, node_2_guild = NULL) %>% group_by()
+
+    avatars_and_guilds <- expand.grid(unique(avatar_network$edges_symetric$node_1), unique(avatar_network$edges_symetric$node_2_guild), stringsAsFactors = FALSE)
+    names(avatars_and_guilds) <- c("avatar", "guild")
+    avatar_guild_connectedness_for_known_samples <- avatars_and_guilds %>%
+        left_join(connectedness_to_guilds) %>%
+        mutate(mean_degree = ifelse(is.na(mean_degree), 0, mean_degree),
+               effective_mean_degree = ifelse(is.na(effective_mean_degree), 0, effective_mean_degree)) %>%
+        right_join(data_train %>%
+                      filter(pred_date == current_pred_date & !is.na(guild) & known_label) %>%
+                      select(avatar, label_guild = guild)) %>%
+        mutate(is_target_guild = (!is.na(label_guild) & label_guild == guild))
+
+    connectedness_to_guilds$pred_date <- current_pred_date
+    avatar_guild_connectedness_for_known_samples$pred_date <- current_pred_date
+
+    list(all_avatar_guild_conns = connectedness_to_guilds,
+        known_samples = avatar_guild_connectedness_for_known_samples)
+
+}
+
+avatar_guild_connectedness_list <- lapply(prediction_dates_train, function(current_pred_date){
+    get_aggregated_avatar_guild_connections(current_pred_date, avatar_network_list[[current_pred_date]])
+})
+avatar_guild_connectedness_all_conns <- rbindlist(
+    lapply(avatar_guild_connectedness_list, function(x){x$all_avatar_guild_conns}))
+avatar_guild_connectedness_known_samples <- rbindlist(
+    lapply(avatar_guild_connectedness_list, function(x){x$known_samples}))
+```
+
+If connectedness is measured by the effective mean degree (the mean connectedness to active guild members):
+
+```{r}
+avatar_guild_connectedness_known_samples %>% filter(effective_mean_degree > 5) %>%
+    ggplot(aes(x = effective_mean_degree)) +
+    geom_density(aes(fill = is_target_guild, color = is_target_guild), alpha = 0.2) + theme_bw()
+```
+
+If connectedness is measured by the simple mean degree (the mean connectedness to guild members):
+
+```{r}
+avatar_guild_connectedness_known_samples %>% filter(mean_degree > 5) %>%
+    ggplot(aes(x = mean_degree)) +
+    geom_density(aes(fill = is_target_guild, color = is_target_guild), alpha = 0.2) + theme_bw()
+```
+
+## Histogram of the connectedness ranks of target guilds
+
+*Connectedness rank*: for each avatar guilds are sorted in descending order according to their connectedness to the given avatar. The rank is the position of the avatar's target guild in this list.
+
+```{r}
+target_guild_connectedness_with_ranks <-
+    avatar_guild_connectedness_all_conns %>%
+    group_by(pred_date, avatar) %>%
+    arrange(desc(effective_mean_degree)) %>%
+    #arrange(desc(mean_degree)) %>%
+    mutate(rank = seq_along(effective_mean_degree)) %>%
+    group_by() %>%
+    right_join(data_train %>%
+                  mutate(pred_date = as.character(pred_date)) %>%
+                  filter(#pred_date == "2008-02-01" &
+                             !is.na(guild) & known_label) %>%
+                  select(avatar, pred_date, label_guild = guild)) %>%
+    filter(!is.na(label_guild) & label_guild == guild)
+# histogram:
+ggplot(target_guild_connectedness_with_ranks, aes(x = rank)) +
+    geom_histogram(binwidth = 1, fill = 'steelblue', alpha = 0.6) + theme_bw() +
+    labs(title = "Rank of a Sample:", subtitle = "Which most connected guild is the target guild")
+# density function:
+#ggplot(target_guild_connectedness_with_ranks, aes(x = rank)) +
+#    geom_density(fill = 'steelblue', alpha = 0.6) + theme_bw() +
+#    labs(title = "Rank of a Sample:", subtitle = "Which most connected guild is the target guild")
+```
+
+# Connectedness Between Target Avatars and Other Avatars
+
+```{r}
+tmp3 <- edges_symetric_all %>% mutate(avatar = node_1) %>%
+    filter(node_2_guild != -1) %>%
+    group_by(avatar, pred_date) %>% # ide a group_by-hoz hozzáadni a pred_date-t
+    arrange(desc(weight)) %>%
+    slice(1:10) %>%
+    mutate(rank1 = paste0("rank-", seq_len(n()), "-guild")) %>%
+    mutate(rank2 = paste0("rank-", seq_len(n()), "-weight")) %>%
+    select(avatar, weight, node_2_guild, node_2, rank1, rank2) %>% # ide is pred_date
+    group_by()
+
+tmp4 <- tmp3 %>%
+    group_by(pred_date) %>% #talán így jó lesz
+    select(avatar, node_2_guild, rank1) %>%
+    spread(key = rank1, value = node_2_guild) %>%
+    group_by()
+
+tmp5 <- tmp3 %>%
+    group_by(pred_date) %>% #talán így jó lesz
+    select(avatar, weight, rank2) %>%
+    spread(key = rank2, value = weight) %>%
+    group_by()
+
+node_degrees_to_nodes <- vertices_df_all %>%
+    filter(!is.na(label_guild)) %>%
+    left_join(edges_symetric_all %>% mutate(avatar = node_1) %>% group_by(avatar) %>%
+                  summarise(degree_all = sum(weight))) %>%
+    left_join(tmp4) %>%
+    left_join(tmp5)
+
+nrow(node_degrees_to_nodes)
+head(node_degrees_to_nodes)
+```
+
+
+Distribution of edge weights towards other avatars by their guild (target/non-target). Note that only the avatars of the training data are considered (i.e. avatars with no guilds on the current prediction date):
+
+```{r}
+node_degrees_to_nodes_all <-
+    edges_symetric_all %>% mutate(avatar = node_1) %>%
+    filter(node_2_guild != -1) %>%  # ez ki is veheto
+    right_join(data_train %>%
+                   mutate(pred_date = as.character(pred_date)) %>%
+                   mutate(label_guild = guild) %>%
+                   #filter(known_label) %>%
+                   filter(!is.na(label_guild)) %>%
+                   select(avatar, label_guild, pred_date)
+    ) %>%
+    mutate(to_target_guild = !is.na(label_guild) & !is.na(node_2_guild) & label_guild == node_2_guild)
+node_degrees_to_nodes_all %>% filter(weight > 5) %>%
+    ggplot(aes(x = weight)) + #xlim(0, 200) +
+    geom_density(aes(fill = to_target_guild, color = to_target_guild), alpha = 0.2) + theme_bw()
+```
+
+Ratio of target guild edges and other edges by the number of included top connections of avatars:
+
+```{r}
+all_edges <- node_degrees_to_nodes_all %>% group_by(to_target_guild) %>% summarise(n = n())
+
+top_edges <- edges_symetric_all %>% mutate(avatar = node_1) %>%
+    filter(node_2_guild != -1) %>%
+    group_by(avatar, pred_date) %>%
+    arrange(desc(weight)) %>%
+    slice(1:10) %>%
+    mutate(rank = paste0("top-", seq_len(n()))) %>%
+    select(avatar, weight, node_2_guild, node_2, rank, pred_date) %>%
+    group_by()
+
+num_edges_by_number_of_top_connections <-
+    top_edges %>%
+    right_join(data_train %>%
+                   mutate(pred_date = as.character(pred_date)) %>%
+                   mutate(label_guild = guild) %>%
+                   #filter(known_label) %>%
+                   filter(!is.na(label_guild)) %>%
+                   select(avatar, label_guild, pred_date)) %>%
+    filter(!is.na(weight)) %>% group_by(rank) %>%
+    summarise(edges_to_target_guild = sum(node_2_guild == label_guild),
+              edges_to_other_guilds = n() - edges_to_target_guild)
+
+num_edges_by_number_of_top_connections2 <- as.data.frame(t(
+    sapply(seq_len(nrow(num_edges_by_number_of_top_connections)), function(x){
+        rank_values <- paste0("top-", 1:x)
+        tmp <- num_edges_by_number_of_top_connections %>%
+            filter(rank %in% rank_values)
+        edges_to_other_guilds <- sum(tmp$edges_to_other_guilds)
+        edges_to_target_guild <- sum(tmp$edges_to_target_guild)
+        c(rank = paste0("top-", x),
+          to_target_guild = edges_to_target_guild / (edges_to_target_guild + edges_to_other_guilds),
+          to_other_guilds = edges_to_other_guilds / (edges_to_target_guild + edges_to_other_guilds))
+}))) %>%
+    mutate(rank = as.character(rank),
+           to_target_guild = as.double(as.character(to_target_guild)),
+           to_other_guilds = as.double(as.character(to_other_guilds))) %>%
+    rbind(data.frame(rank = "All Edges",
+                          to_target_guild = all_edges$n[all_edges$to_target_guild] / sum(all_edges$n),
+                          to_other_guilds = all_edges$n[!all_edges$to_target_guild] / sum(all_edges$n)))
+
+num_edges_by_number_of_top_connections2 %>%
+    gather(key = type, value = edges_percent, -rank) %>%
+    mutate(rank = factor(rank, levels =
+                             c(paste0("top-",1:nrow(num_edges_by_number_of_top_connections)), "All Edges"))) %>%
+    ggplot(aes(x = rank, y = edges_percent)) +
+    geom_bar(aes(fill = type), stat = 'identity', position = 'dodge') +
+    #geom_text(aes(label = paste0(100 * round(edges_percent, 4), "%"), color = type),
+    #          position = position_dodge(width = .8), angle = 45, vjust = -0.6, hjust = 0.15) +
+    geom_label(aes(label = paste0(100 * round(edges_percent, 4), "%"), fill = type),
+              position = position_dodge(width = .8), vjust = -0.2, alpha = 0.65, color = 'white') +
+    theme_bw() +
+    labs(x = "How Many of the Avatars' Top-Weight Edges Are Considered",
+         y = "Percentage of Various Types of Edges",
+         title = "Percentage of Edges that Go to the Members Of the Target Guild",
+         subtitle = "Within Different Subsets of the Avatars' Top-Weight Edges")
+```
